@@ -1,10 +1,10 @@
 # Origin
 This integration was originally developed through the excellent work of  https://github.com/OStrama/judo_rest_api.git. Many thanks to his work.
 
-The code was heavily modified, extended and adapted to the JUDO ZEWA/PROM iSafe by tach2004.
+The code was heavily modified, extended and adapted to the JUDO ZEWA/PROM i-Safe by tach2004.
 
 
-# JUDO-ZEWA-iSafe-Rest-API
+# JUDO ZEWA iSafe Rest API
 Home Assistant integration to connect to Judo Zewa/Prom iSafe directly via REST API based on this documentation:
 
 
@@ -15,7 +15,7 @@ Please have a look here to learn more about the communication module that provid
 
 https://judo.eu/produkte/connectivity-modul-wlan/
 
-# JUDO-ZEWA-iSafe-Rest-API
+# JUDO ZEWA iSafe Rest API
 
 This integration lets you monitor and control your Judo Zewa/Prom iSafe device locally through it's REST API.
 ![grafik](https://github.com/user-attachments/assets/2bcd6122-dfc9-4143-b52f-b8cba2eb82df)
@@ -29,10 +29,10 @@ Add this repository to HACS.
 * In the HACS GUI, select "Custom repositories"
 * Enter the following repository URL: https://github.com/tach2004/JUDO-ZEWA-iSafe-Rest-API
 * Category: Integration
-* Now search in hacs for JUDO-ZEWA-iSafe-Rest-API, click on it and press the button at the bottom right “download”
+* Now search in hacs for JUDO ZEWA iSafe Rest API, click on it and press the button at the bottom right “download”
 * After adding the integration, restart Home Assistant.
 * Now press the button "Add Integration" in Configuration -> Integrations to install it in Home assistant.
-* Now under Configuration -> Integrations, "JUDO-ZEWA-iSafe-Rest-API" should be available.
+* Now under Configuration -> Integrations, "JUDO ZEWA iSafe Rest API" should be available.
 
 ### Manual install
 
@@ -44,7 +44,7 @@ This is how your custom_components directory should look like:
 
 ```bash
 custom_components
-├── JUDO-ZEWA-iSafe-Rest-API
+├── judo_rest_api
 │   ├── __init__.py
 │   ├── ...
 │   ├── ...

@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "../../../../../workspaces/core"
+		},
+		{
+			"name": "weishaupt_modbus",
+			"path": "../../../weishaupt_modbus"
+		},
+		{
+			"name": "judo_rest_api",
+			"path": "../.."
+		}
+	],
+	"settings": {}
+}

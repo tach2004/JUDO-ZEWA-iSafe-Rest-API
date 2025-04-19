@@ -1,0 +1,314 @@
+{
+    "config": {
+        "abort": {
+            "already_configured": "Account ist bereits konfiguriert"
+        },
+        "error": {
+            "cannot_connect": "Verbindung fehlgeschlagen",
+            "invalid_auth": "Authentifizierung fehlerhaft",
+            "unknown": "Unerwarteted Fehler"
+        },
+        "step": {
+            "user": {
+                "data": {
+                    "Device-Postfix": "Device postfix",
+                    "scan_interval": "API-Abfrageintervall (standard = 60 s)",
+                    "host": "Hostname oder IP Adresse",
+                    "port": "HTTP Port",
+                    "username": "Benutzername",
+                    "password": "Passwor1"
+                }
+            },
+            "reconfigure": {
+                "data": {
+                    "Device-Postfix": "Device postfix",
+                    "scan_interval": "API-Abfrageintervall (standard = 60 s)",
+                    "host": "Hostname oder IP Adresse",
+                    "port": "HTTP Port",
+                    "username": "Benutzername",
+                    "password": "Passwor1"
+                }
+            }
+        }
+    },
+    "device": {
+        "dev_statistics": {
+            "name": "Judo Statistik{postfix}"
+        },
+        "dev_system": {
+            "name": "Judo System{postfix}"
+        },
+        "dev_unknown": {
+            "name": "Judo Unbekannt{postfix}"
+        }
+    },
+    "entity": {
+        "number": {
+            "water_hardeness": {
+                "name": "Wasserhärte"
+            },
+            "salt_warning": {
+                "name": "Salzwarnung"
+            }    
+        },
+        "button": {
+            "leakage_protection_close": {
+                "name": "Schließe Leckageschutz"
+            },
+            "leakage_protection_open": {
+                "name": "Öffne Leckageschutz"
+            },
+            "start_regeneration": {
+                "name": "Regeneration starten"
+            },
+            "sleep_mode_on": {
+                "name": "Sleepmodus starten"
+            },    
+            "sleep_mode_off": {
+                "name": "Sleepmodus beenden"
+            },
+            "holiday_mode_on": {
+                "name": "Urlaubsmodus starten"
+            },
+            "holiday_mode_off": {
+                "name": "Urlaubsmodus beenden"
+            },
+            "microleakage_check": {
+                "name": "Microleckageprüfung starten"
+            },
+            "learning_mode_on": {
+                "name": "Lernmodus starten"                          
+            },
+            "message_reset": {
+                "name": "Meldungen rücksetzten"
+            }
+        },
+        "select": {
+            "hz_operationmode": {
+                "name": "{prefix}Betriebsart",
+                "state": {
+                    "hz_operationmode_lowering": "Absenkbetrieb",
+                    "hz_operationmode_automatic": "Automatik",
+                    "hz_operationmode_normal": "Normal",
+                    "hz_operationmode_standby": "Standby",
+                    "hz_operationmode_comfort": "Komfort"
+                }
+            },
+            "holiday_mode_write": {
+                "name": "Urlaubsmodus schreiben",
+                "state": {
+                    "deactivated": "Deaktiviert",
+                    "h1": "U1",
+                    "h2": "U2",
+                    "h3_water_closed": "U3=Wasser absperren"
+                }
+            },
+            "sleep_mode_duration": {
+                "name": "Sleepmodusdauer"
+            },
+            "auto_microleakage_check": {
+                "name": "Autom. Microleckageprüfung",
+                "state": {
+                    "no_auto_check": "Keine autom. Prüfung",
+                    "with_message": "Mit Meldung",
+                    "with_message_close": "Mit Meldung und schließen"
+                }
+            },
+            "absence_limit_max_waterflowrate": {
+                "name": "Abwesenheit Grenzw. Durchfluss L/h",
+                "state": {
+                    "deactivated": "Deaktiviert",
+                    "100_l_h": "100 l/h",
+                    "200_l_h": "200 l/h",
+                    "300_l_h": "300 l/h",
+                    "400_l_h": "400 l/h",
+                    "500_l_h": "500 l/h",
+                    "1000_l_h": "1000 l/h",
+                    "1500_l_h": "1500 l/h",
+                    "2000_l_h": "2000 l/h",
+                    "2500_l_h": "2500 l/h",
+                    "3000_l_h": "3000 l/h",
+                    "3500_l_h": "3500 l/h",
+                    "4000_l_h": "4000 l/h",
+                    "4500_l_h": "4500 l/h",
+                    "5000_l_h": "5000 l/h"
+                }   
+            },
+            "absence_limit_max_water_flow": {
+                "name": "Abwesenheit Grenzw. Wassermenge L",
+                "state": {
+                    "deactivated": "Deaktiviert",
+                    "5_l": "5 Liter",
+                    "10_l": "10 Liter",
+                    "15_l": "15 Liter",
+                    "20_l": "20 Liter",
+                    "25_l": "25 Liter",
+                    "50_l": "50 Liter",
+                    "100_l": "100 Liter",
+                    "150_l": "150 Liter",
+                    "200_l": "200 Liter",
+                    "250_l": "250 Liter",
+                    "300_l": "300 Liter",
+                    "500_l": "500 Liter",
+                    "1000_l": "1000 Liter",
+                    "1500_l": "1500 Liter",
+                    "2000_l": "2000 Liter",
+                    "2500_l": "2500 Liter",
+                    "3000_l": "3000 Liter"
+                } 
+            },
+            "absence_limit_max_waterflow_time": {
+                "name": "Abwesenheit Grenzw. Entnahmemenge min",
+                "state": {
+                    "deactivated": "Deaktiviert",
+                    "5_min": "5 Minuten",
+                    "10_min": "10 Minuten",
+                    "20_min": "20 Minuten",
+                    "30_min": "30 Minuten",
+                    "60_min": "60 Minuten",
+                    "90_min": "90 Minuten",
+                    "120_min": "120 Minuten",
+                    "180_min": "180 Minuten",
+                    "240_min": "240 Minuten",
+                    "300_min": "300 Minuten"
+                }  
+            },
+            "leakageprotection_max_waterflowrate": {
+                "name": "Leckageschutz max Durchfluss L/h",
+                "state": {
+                    "unlimited": "unbegrenzt",
+                    "500_l_h": "500 l/h",
+                    "1000_l_h": "1000 l/h",
+                    "1500_l_h": "1500 l/h",
+                    "2000_l_h": "2000 l/h",
+                    "2500_l_h": "2500 l/h",
+                    "3000_l_h": "3000 l/h",
+                    "3500_l_h": "3500 l/h",
+                    "4000_l_h": "4000 l/h",
+                    "4500_l_h": "4500 l/h",
+                    "5000_l_h": "5000 l/h"
+                }
+            },
+            "leakageprotection_max_waterflow": {
+                "name": "Leckageschutz max Wassermenge L",
+                "state": {
+                    "unlimited": "unbegrenzt",
+                    "100_l": "100 Liter",
+                    "200_l": "200 Liter",
+                    "300_l": "300 Liter",
+                    "400_l": "400 Liter",
+                    "500_l": "500 Liter",
+                    "600_l": "600 Liter",
+                    "700_l": "700 Liter",
+                    "800_l": "800 Liter",
+                    "900_l": "900 Liter",
+                    "1000_l": "1000 Liter",
+                    "1100_l": "1100 Liter",
+                    "1200_l": "1200 Liter",
+                    "1300_l": "1300 Liter",
+                    "1500_l": "1500 Liter",
+                    "2000_l": "2000 Liter",
+                    "2500_l": "2500 Liter",
+                    "3000_l": "3000 Liter"
+                }    
+            },
+            "leakageprotection_max_waterflowtime": {
+                "name": "Leckageschutz max Entnahmezeit",
+                "state": {
+                    "unlimited": "unbegrenzt",
+                    "10_min": "10 Minuten",
+                    "20_min": "20 Minuten",
+                    "30_min": "30 Minuten",
+                    "40_min": "40 Minuten",
+                    "50_min": "50 Minuten",
+                    "60_min": "60 Minuten",
+                    "75_min": "75 Minuten",
+                    "90_min": "90 Minuten",
+                    "2_h": "2 Stunden",
+                    "2_5_h": "2,5 Stunden",
+                    "3_h": "3 Stunden",
+                    "3_5_h": "3,5 Stunden",
+                    "4_h": "4 Stunden",
+                    "4_5_h": "4,5 Stunden",
+                    "5_h": "5 Stunden"
+                }
+            }
+        },
+        "sensor": {
+            "device_number": {
+                "name": "Gerätenummer"
+            },
+            "software_version": {
+                "name": "Softwareversion"
+            },
+            "day_statistics": {
+                "name": "Statistik"
+            },
+            "device_type": {
+                "name": "Gerätetyp",
+                "state": {
+
+                    "i_soft_safe_plus": "i-soft SAFE+",
+                    "i_soft_k_safe_plus": "i-soft K SAFE+",
+                    "i_soft_pro": "i-soft PRO",
+                    "i_soft_pro_l": "i-soft PRO L",
+                    "i_soft": "i-soft",
+                    "i_soft_k": "i-soft K",
+                    "softwell_p": "SOFTwell P",
+                    "softwell_s": "SOFTwell S",
+                    "softwell_k": "SOFTwell K",
+                    "softwell_kp": "SOFTwell KP",
+                    "softwell_ks": "SOFTwell KS",
+                    "zewa_prom_i_safe": "ZEWA/PROM i-SAFE (FILT)",
+                    "i_dos_eco": "i-dos eco",
+                    "i_fill": "i-fill"
+                }
+            },
+            "salt_storage_mass": {
+                "name": "Salzvorrat Masse"
+            },
+            "salt_storage_days": {
+                "name": "Salzvorrat Tage"
+            },
+            "water_total": {
+                "name": "Gesamtwassermenge"
+            },
+            "water_treated": {
+                "name": "Weichwassermenge"
+            },
+            "service_contact": {
+                "name": "Kundendienst-Kontakt"
+            },
+            "operating_days": {
+                "name": "Betriebszeit Tage"
+            },
+            "operating_minutes": {
+                "name": "Betriebszeit Minuten"
+            },
+            "operating_hours": {
+                "name": "Betriebszeit Stunden"
+            },
+            "install_date": {
+                "name": "Inbetriebnahmedatum"
+            },
+            "leakage_protection": {
+                "name": "Leckageschutz"
+            },
+            "learning_mode_status": {
+                "name": "Lernmodus Status"
+            },
+            "learning_water_quantity": {
+                "name": "Lernwassermenge Rest"
+            },
+            "water_flow": {
+                "name": "Wasserdurchfluss"
+            }  
+        },
+        "switch": {
+            "water_flow_check_on_off": {
+                "name": "Wasserdurchfluss erm. an/aus"
+            }    
+        }
+    },
+    "title": "Judo Zewa iSafe Filt"
+}

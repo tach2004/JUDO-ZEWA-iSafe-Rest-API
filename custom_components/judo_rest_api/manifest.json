@@ -1,0 +1,12 @@
+{
+  "domain": "judo_rest_api",
+  "name": "JUDO ZEWA iSafe Rest API",
+  "codeowners": ["@tach2004"],
+  "config_flow": true,
+  "documentation": "https://github.com/tach2004/JUDO-ZEWA-iSafe-Rest-API/",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/tach2004/JUDO-ZEWA-iSafe-Rest-API/issues",
+  "loggers": ["judo_rest_api"],
+  "requirements": [],
+  "version": "1.0.0"
+}

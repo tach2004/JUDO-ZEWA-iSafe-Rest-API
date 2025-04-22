@@ -375,6 +375,14 @@ PARAMS_INFO: dict = {
 PARAMS_SWITCH_WF: dict = {
     "icon": "mdi:toggle-switch-outline"
 }
+PARAMS_DATETIME: dict = {
+    "deviceclass": SensorDeviceClass.TIMESTAMP,
+    "icon": "mdi:clock"
+}
+PARAMS_DATETIME_BUTTON: dict = {
+    "icon": "mdi:clock-edit-outline"
+}
+
 # pylint: disable=line-too-long
 
 # fmt: off
@@ -413,6 +421,9 @@ REST_SYS_ITEMS: list[RestItem] = [
     RestItem( address_read="6400", read_bytes = 2, read_index=1, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_FLOW_CM, translation_key="learning_water_quantity"),
     RestItem( address_read="0E00", read_bytes = 4, read_index=0, mformat=FORMATS.TIMESTAMP, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_INFO, translation_key="install_date"),
 
+#Time_Date
+    RestItem( address_read="5900", read_bytes = 6, read_index=0, mformat=FORMATS.DATETIME_JUDO, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_DATETIME, translation_key="datetime_judo"),
+
 #Button
     RestItem(address_write="5100", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_CLOSE, translation_key="leakage_protection_close"),
     RestItem(address_write="5200", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_OPEN, translation_key="leakage_protection_open"),
@@ -423,6 +434,8 @@ REST_SYS_ITEMS: list[RestItem] = [
     RestItem(address_write="5C00", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_MICROLEAK, translation_key="microleakage_check"),
     RestItem(address_write="5D00", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_LEARN, translation_key="learning_mode_on"),
     RestItem(address_write="6300", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_RESET, translation_key="message_reset"),
+    
+    RestItem(address_write="5A00", write_bytes = 6, write_index=0, mformat=FORMATS.BUTTON_WO_DATETIME, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_DATETIME_BUTTON, translation_key="set_judo_time"),
 
 # RestItem(mformat=FORMATS.STATUS, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MASS_REFILL, resultlist=SALT_MASS, translation_key="salt_refill_mass"),
 #Switch

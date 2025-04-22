@@ -80,7 +80,10 @@
                 "name": "Learning mode on"
             },
             "message_reset": {
-                "name": "Message reset"
+                "name": "Message reset"  
+            },
+            "set_judo_time": {
+                "name": "set judo time"  
             }
         },
         "select": {
@@ -95,7 +98,7 @@
                 }
             },
             "holiday_mode_write": {
-                "name": "holiday_mode_write",
+                "name": "holiday mode write",
                 "state": {
                     "deactivated": "deactivated",
                     "h1": "H1",
@@ -174,7 +177,7 @@
                 }  
             },
             "leakageprotection_max_waterflowrate": {
-                "name": "leakageprotection max waterflowrate",
+                "name": "Leakageprotection max waterflowrate",
                 "state": {
                     "unlimited": "unlimited",
                     "500_l_h": "500 l/h",
@@ -302,6 +305,9 @@
             },
             "water_flow": {
                 "name": "water_flow"
+            },
+            "datetime_judo": {
+                "name": "datetime_judo"
             } 
         },
         "switch": {

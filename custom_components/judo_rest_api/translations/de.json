@@ -77,10 +77,13 @@
                 "name": "Microleckageprüfung starten"
             },
             "learning_mode_on": {
-                "name": "Lernmodus starten"                          
+                "name": "Lernmodus starten"
             },
             "message_reset": {
                 "name": "Meldungen rücksetzten"
+            },
+            "set_judo_time": {
+                "name": "Datum & Uhrzeit Judo setzten"  
             }
         },
         "select": {
@@ -302,7 +305,10 @@
             },
             "water_flow": {
                 "name": "Wasserdurchfluss"
-            }  
+            },
+            "datetime_judo": {
+                "name": "Datum & Uhrzeit Judo"
+            }   
         },
         "switch": {
             "water_flow_check_on_off": {

@@ -101,7 +101,9 @@ The developers do not guarantee functionality, compatibility, or safety and are 
 
 This integration is provided free of charge and as an open-source project. It does not offer official support or services on behalf of JUDO. 
 
-🚨All trademarks, product names, logos, and images are the property of their respective owners and are used here for identification purposes only. If any rights holder objects to the use of their assets, we will promptly remove or replace the affected material upon request.🚨
+🚨All trademarks, product names, logos, and images are the property of their respective owners and are used here for identification purposes only. 
+The use of these names, trademarks and brands appearing in these image files, do not imply endorsement
+If any rights holder objects to the use of their assets, we will promptly remove or replace the affected material upon request.🚨
 
 #  
 
@@ -117,4 +119,10 @@ Die Nutzung dieser Integration erfolgt auf eigenes Risiko und in eigener Verantw
 Die Integration wird kostenlos und als Open-Source-Projekt bereitgestellt. Sie dient ausschließlich privaten, nicht-kommerziellen Zwecken.
 Es wird kein offizieller Support oder Service im Namen von JUDO angeboten
 
-🚨Alle verwendeten Marken, Produktnamen, Logos und Grafiken sind Eigentum der jeweiligen Rechteinhaber und dienen ausschließlich der identifikatorischen Darstellung. Sollte ein Rechteinhaber Einwände gegen die Verwendung haben, wird das betroffene Material auf Anfrage umgehend entfernt oder ersetzt.🚨
+🚨Alle verwendeten Marken, Produktnamen, Logos und Grafiken sind Eigentum der jeweiligen Rechteinhaber und dienen ausschließlich der identifikatorischen Darstellung. 
+Die Verwendung dieser Namen, Marken und Markenzeichen in diesen Bilddateien impliziert keine Unterstützung oder Empfehlung durch die Markeninhaber
+Sollte ein Rechteinhaber Einwände gegen die Verwendung haben, wird das betroffene Material auf Anfrage umgehend entfernt oder ersetzt.🚨
+
+#
+
+see: https://github.com/home-assistant/brands

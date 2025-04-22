@@ -195,6 +195,10 @@ class RestObject:
             return None
         if self._rest_item.format is FORMATS.BUTTON:
             return None
+        if self._rest_item.format is FORMATS.BUTTON_INTERNAL:
+            return None
+        if self._rest_item.format is FORMATS.BUTTON_WO_DATETIME:
+            return None
         if self._rest_item.format is FORMATS.NUMBER_WO:
             return None
         if self._rest_item.format is FORMATS.NUMBER_INTERNAL:
@@ -237,9 +241,20 @@ class RestObject:
             case FORMATS.TEXT:
                 return bytearray.fromhex(big_endian).decode()
             case FORMATS.STATUS:
-                return self._rest_item.get_translation_key_from_number(
-                    int(little_endian, 16)
-                )
+                return self._rest_item.get_translation_key_from_number(int(little_endian, 16))
+            case FORMATS.DATETIME_JUDO:
+                try:
+                    # Format: DD MM YY HH mm SS (6 bytes / 12 hex chars)
+                    day = int(big_endian[0:2], 16)
+                    month = int(big_endian[2:4], 16)
+                    year = int(big_endian[4:6], 16) + 2000  # Jahr z. B. 0x17 = 23 → 2023
+                    hour = int(big_endian[6:8], 16)
+                    minute = int(big_endian[8:10], 16)
+                    second = int(big_endian[10:12], 16)
+                    return datetime(year, month, day, hour, minute, second) 
+                except Exception as e:
+                    log.warning("Fehler beim Parsen von Judo-Datum: %s", e)
+                    return None
             case _:
                 log.warning(
                     "Unknown format: %s in %s",
@@ -291,6 +306,8 @@ class RestObject:
                 towrite = self.format_int_message(
                     self._rest_item.get_number_from_translation_key(value), True
                 )
+            case FORMATS.BUTTON_WO_DATETIME:
+                towrite = value.upper()  #Adresse?
             case _:
                 log.warning(
                     "Unknown format: %s in %s",

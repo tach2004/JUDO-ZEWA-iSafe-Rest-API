@@ -3,7 +3,8 @@
 import asyncio
 import logging
 from datetime import timedelta
-
+from datetime import datetime
+from homeassistant.components.persistent_notification import async_create as create_notification
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -54,6 +55,10 @@ class MyCoordinator(DataUpdateCoordinator):
         """Read a value from the rest API"""
 
         if rest_item.format is FORMATS.BUTTON:
+            return None
+        if rest_item.format is FORMATS.BUTTON_INTERNAL:
+            return None
+        if rest_item.format is FORMATS.BUTTON_WO_DATETIME:
             return None
         if rest_item.format is FORMATS.NUMBER_WO:
             return None
@@ -115,22 +120,40 @@ class MyCoordinator(DataUpdateCoordinator):
             item = self._restitems[index]
             try:
                 await self.get_value(item)
-#                if item.translation_key == "water_total":
-#                    current_water_total = item.state
-#                    flow_check = self.get_value_from_item("water_flow_check_on_off")
-#                    log.debug("Wasser_total: %s", current_water_total)
-#                    if flow_check == 1 and self._previous_water_total is not None and current_water_total != self._previous_water_total:
-#                        self.update_interval = timedelta(seconds=10)
-#                        log.debug("Interval 10s")
-#                    else:
-#                        self.update_interval = self._default_scan_interval
-#                        log.debug("Interval 60s")
-#                    self._previous_water_total = current_water_total
+
             except Exception:
                 log.warning(
                     "connection to Judo Zewa failed for %s",
                     item.translation_key,
                 )
+        #Zeitabweichung prüfen – nur einmalig nach dem Durchlauf
+        judo_time = self.get_value_from_item("datetime_judo")
+        ha_time = datetime.now().replace(microsecond=0)
+        
+        log.debug("judo_time %s", judo_time)
+        log.debug("ha_time %s", ha_time)
+        
+        if isinstance(judo_time, datetime):
+            delta = abs((ha_time - judo_time).total_seconds())
+            log.debug("delta %s", delta)
+            
+            if delta > 5 * 60:
+                minutes = round(delta / 60, 1)
+                log.warn("Judo-Zeit weicht von Homeassistant-Zeit ab: %.1f Minuten", minutes)
+                try:
+                    self.hass.async_create_task(
+                        self.hass.services.async_call(
+                            "persistent_notification",
+                            "create",
+                            {
+                                "title": "Judo Uhrzeit nicht synchron",
+                                "message": f"Die Judo-Zeit weicht von der Homeassistant-Zeit um {minutes} Minuten ab.",
+                                "notification_id": "judo_time_drift"
+                            }
+                        )
+                    )
+                except Exception as e:
+                    log.error("Fehler beim Erstellen der Benachrichtigung über Serviceaufruf: %s", e)
 
     async def _async_update_data(self):
         """Fetch data from API endpoint.

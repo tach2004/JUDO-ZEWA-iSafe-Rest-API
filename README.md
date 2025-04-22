@@ -99,6 +99,8 @@ This Home Assistant integration for JUDO devices is an independent, community-dr
 The integration is based solely on publicly available information and reverse engineering. It is provided as-is, and the use is at your own risk and responsibility.
 The developers do not guarantee functionality, compatibility, or safety and are not liable for any direct or indirect damages resulting from the use of this integration.
 
+This integration is provided free of charge and as an open-source project. It does not offer official support or services on behalf of JUDO. 
+
 🚨All trademarks, product names, logos, and images are the property of their respective owners and are used here for identification purposes only. If any rights holder objects to the use of their assets, we will promptly remove or replace the affected material upon request.🚨
 
 #  
@@ -107,9 +109,12 @@ The developers do not guarantee functionality, compatibility, or safety and are 
 
 ⚠️ Haftungsausschluss und rechtlicher Hinweis
 
-Diese Home Assistant-Integration für JUDO-Geräte wurde unabhängig von den offiziellen Herstellern entwickelt und basiert ausschließlich auf öffentlich zugänglichen Informationen sowie eigener Analyse.
-Die Entwickler stehen in keiner Verbindung zu JUDO Wasseraufbereitung GmbH und arbeiten nicht im Auftrag oder mit Genehmigung des Unternehmens.
+Diese Home Assistant-Integration für JUDO-Geräte ist ein unabhängiges, community-getriebenes Projekt. Sie steht in keiner Verbindung zur JUDO Wasseraufbereitung GmbH, 
+wurde nicht von JUDO beauftragt oder unterstützt und basiert ausschließlich auf öffentlich zugänglichen Informationen sowie eigener Analyse
 
 Die Nutzung dieser Integration erfolgt auf eigenes Risiko und in eigener Verantwortung. Es besteht keine Gewähr für Funktion, Sicherheit oder Kompatibilität mit Geräten von JUDO. Für etwaige Schäden oder Funktionsstörungen, die durch die Nutzung dieser Integration entstehen, wird keine Haftung übernommen.
+
+Die Integration wird kostenlos und als Open-Source-Projekt bereitgestellt. Sie dient ausschließlich privaten, nicht-kommerziellen Zwecken.
+Es wird kein offizieller Support oder Service im Namen von JUDO angeboten
 
 🚨Alle verwendeten Marken, Produktnamen, Logos und Grafiken sind Eigentum der jeweiligen Rechteinhaber und dienen ausschließlich der identifikatorischen Darstellung. Sollte ein Rechteinhaber Einwände gegen die Verwendung haben, wird das betroffene Material auf Anfrage umgehend entfernt oder ersetzt.🚨

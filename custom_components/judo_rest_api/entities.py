@@ -5,6 +5,7 @@ import time
 import asyncio
 import collections
 
+from datetime import datetime
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.components.number import NumberEntity
 from homeassistant.components.switch import SwitchEntity
@@ -83,7 +84,7 @@ class MyEntity(Entity):
         self._rest_api = rest_api
 
         match self._rest_item.format:
-            case FORMATS.STATUS |FORMATS.STATUS_WO | FORMATS.TEXT | FORMATS.TIMESTAMP | FORMATS.SW_VERSION:
+            case FORMATS.STATUS |FORMATS.STATUS_WO | FORMATS.TEXT | FORMATS.TIMESTAMP | FORMATS.SW_VERSION | FORMATS.DATETIME_JUDO:
                 self._divider = 1
             case _:
                 # default state class to record all entities by default
@@ -121,8 +122,8 @@ class MyEntity(Entity):
             "identifiers": {(CONST.DOMAIN, self._dev_device)},
             "translation_key": self._dev_device,
             "translation_placeholders": self._dev_translation_placeholders,
-            "sw_version": "Device_SW_Version",
-            "model": "Device_model",
+            "sw_version": self.coordinator.get_value_from_item("software_version"),
+            "model": self.coordinator.get_value_from_item("device_type"),
             "manufacturer": "Judo",
         }
 
@@ -276,8 +277,32 @@ class MyButtonEntity(CoordinatorEntity, ButtonEntity, MyEntity):  # pylint: disa
 
     async def async_press(self):
         """Turn the entity on."""
-        ro = RestObject(self._rest_api, self._rest_item)
-        await ro.setvalue()  # rest_item.state will be set inside ro.setvalue
+        if self._rest_item.translation_key == "set_judo_time":
+            try:
+                now = datetime.now()
+                # Sicherheit: Ist es ein datetime-Objekt?
+                if not isinstance(now, datetime):
+                    raise ValueError("Ungültiger datetime-Wert")
+                # Optional: Jahr sinnvoll?
+                if not (2000 <= now.year <= 2099):
+                    raise ValueError(f"Jahr außerhalb des gültigen Bereichs: {now.year}")
+                payload = (
+                    f"{now.day:02X}"
+                    f"{now.month:02X}"
+                    f"{now.year % 100:02X}"
+                    f"{now.hour:02X}"
+                    f"{now.minute:02X}"
+                    f"{now.second:02X}"
+                )
+                ro = RestObject(self._rest_api, self._rest_item)
+                await ro.setvalue(payload)
+                log.warn("Zeit an Judo gesendet und gesetzt: %s (Hex: %s)",now.strftime("%d.%m.%Y %H:%M:%S"),payload,)
+            except Exception as e:
+                log.error("Fehler beim Erzeugen oder Senden der Uhrzeit: %s", e)
+            
+        else:
+            ro = RestObject(self._rest_api, self._rest_item)
+            await ro.setvalue()  # rest_item.state will be set inside ro.setvalue
 
     @property
     def device_info(self) -> DeviceInfo:

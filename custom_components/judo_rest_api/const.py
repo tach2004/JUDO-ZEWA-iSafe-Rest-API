@@ -53,8 +53,11 @@ class FormatConstants:
     SWITCH = "Switch"
     SWITCH_INTERNAL = "Switch_internal" #Only internal Switch without read and write to the api
     BUTTON = "Button"
+    BUTTON_INTERNAL = "button_interal"
+    BUTTON_WO_DATETIME = "button_wo_datetime"
     TIMESTAMP = "Timestamp"
     SW_VERSION = "SW_Version"
+    DATETIME_JUDO = "datetime_judo"
 
 
 FORMATS = FormatConstants()

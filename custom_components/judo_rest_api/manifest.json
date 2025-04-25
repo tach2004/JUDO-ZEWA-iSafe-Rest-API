@@ -8,5 +8,5 @@
   "issue_tracker": "https://github.com/tach2004/JUDO-ZEWA-iSafe-Rest-API/issues",
   "loggers": ["judo_rest_api"],
   "requirements": [],
-  "version": "1.0.1"
+  "version": "1.0.2"
 }

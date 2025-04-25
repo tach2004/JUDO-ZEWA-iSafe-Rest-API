@@ -283,9 +283,10 @@ class MyButtonEntity(CoordinatorEntity, ButtonEntity, MyEntity):  # pylint: disa
                 # Sicherheit: Ist es ein datetime-Objekt?
                 if not isinstance(now, datetime):
                     raise ValueError("Ungültiger datetime-Wert")
-                # Optional: Jahr sinnvoll?
+                
                 if not (2000 <= now.year <= 2099):
                     raise ValueError(f"Jahr außerhalb des gültigen Bereichs: {now.year}")
+                
                 payload = (
                     f"{now.day:02X}"
                     f"{now.month:02X}"
@@ -294,9 +295,30 @@ class MyButtonEntity(CoordinatorEntity, ButtonEntity, MyEntity):  # pylint: disa
                     f"{now.minute:02X}"
                     f"{now.second:02X}"
                 )
+
+                #Abweichung erfassen
+                delta_seconds = getattr(self.coordinator, "_last_time_drift", None)
+
+                #Zeit setzten    
                 ro = RestObject(self._rest_api, self._rest_item)
                 await ro.setvalue(payload)
-                log.warn("Zeit an Judo gesendet und gesetzt: %s (Hex: %s)",now.strftime("%d.%m.%Y %H:%M:%S"),payload,)
+
+                #Meldung ausgeben
+                if delta_seconds is not None:
+                    log.warn(
+                        "Zeit an Judo gesendet und gesetzt: %s (Hex: %s), vorherige Abweichung: %.1f Sekunden",
+                        now.strftime("%d.%m.%Y %H:%M:%S"),
+                        payload,
+                        delta_seconds,
+                    )
+                else:
+                    log.warn(
+                        "Zeit an Judo gesendet und gesetzt: %s (Hex: %s), vorherige Abweichung unbekannt",
+                        now.strftime("%d.%m.%Y %H:%M:%S"),
+                        payload,
+                    )
+            
+            
             except Exception as e:
                 log.error("Fehler beim Erzeugen oder Senden der Uhrzeit: %s", e)
             

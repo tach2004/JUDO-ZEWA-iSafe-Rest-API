@@ -50,6 +50,7 @@ class MyCoordinator(DataUpdateCoordinator):
         self._config_entry = p_config_entry
         self._previous_water_total = None
         self._default_scan_interval = timedelta(seconds=int(p_config_entry.data[CONF.SCAN_INTERVAL]))
+        self._last_time_drift = None  # Letzte bekannte Zeitabweichung in Sekunden
 
     async def get_value(self, rest_item: RestItem):
         """Read a value from the rest API"""
@@ -135,6 +136,7 @@ class MyCoordinator(DataUpdateCoordinator):
         
         if isinstance(judo_time, datetime):
             delta = abs((ha_time - judo_time).total_seconds())
+            self._last_time_drift = delta
             log.debug("delta %s", delta)
             
             if delta > 5 * 60:

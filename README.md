@@ -88,6 +88,11 @@ That means:
 
 ---
 
+***One more thing:***
+I'm sure several people are wondering why, for example, the leakage protection is not displayed whether it is open or closed, or why no warning messages are displayed via HA in the event of a leak or anything else. Unfortunately, these and other status/messages etc. are not provided by Judo via the API. This is a great pity because it is technically feasible without any problems! I hope that this will be updated by Judo in the future!
+
+---
+
 # ❗️ Disclaimer
 
 🇬🇧 English:

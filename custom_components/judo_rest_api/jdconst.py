@@ -183,6 +183,16 @@ AUTO_MICROLEAKAGECHECK_LIST: list[StatusItem] = [
     StatusItem(number=1, translation_key="with_message"),
     StatusItem(number=2, translation_key="with_message_close"),
 ]
+
+FLUSH_INTERVAL_LIST: list[StatusItem] = [
+    StatusItem(number=0, translation_key="deactivated"),
+    StatusItem(number=1, translation_key="1m"),
+    StatusItem(number=2, translation_key="2m"),
+    StatusItem(number=3, translation_key="3m"),
+    StatusItem(number=4, translation_key="4m"),
+    StatusItem(number=6, translation_key="6m"),
+    StatusItem(number=12, translation_key="12m"),
+]
 #####################################################
 # Description of physical units via the status list #
 #####################################################
@@ -195,6 +205,7 @@ PARAMS_FLOWRATE: dict = {
     "precision": 2,
     "unit": UnitOfVolumeFlowRate.LITERS_PER_MINUTE,
     "stateclass": SensorStateClass.MEASUREMENT,
+    "deviceclass": SensorDeviceClass.VOLUME_FLOW_RATE,
     "icon": "mdi:waves-arrow-right"
 }
 
@@ -206,6 +217,7 @@ PARAMS_FLOWRATE2: dict = {
     "precision": 0,
     "unit": UnitOfVolumeFlowRate.LITERS_PER_MINUTE,
     "stateclass": SensorStateClass.MEASUREMENT,
+    "deviceclass": SensorDeviceClass.VOLUME_FLOW_RATE,
     "icon": "mdi:waves-arrow-right"
 }
 
@@ -214,6 +226,7 @@ PARAMS_FLOWRATE3: dict = {
     "precision": 2,
     "unit": UnitOfVolumeFlowRate.LITERS_PER_MINUTE,
     "stateclass": SensorStateClass.MEASUREMENT,
+    "deviceclass": SensorDeviceClass.VOLUME_FLOW_RATE,
     "icon": "mdi:waves-arrow-right"
 }
 
@@ -224,7 +237,8 @@ PARAMS_FLOW: dict = {
     "divider": 1,
     "precision": 0,
     "unit": UnitOfVolume.LITERS,
-    "stateclass": SensorStateClass.MEASUREMENT,
+    "stateclass": SensorStateClass.TOTAL,
+    "deviceclass": SensorDeviceClass.VOLUME,
     "icon": "mdi:waves"
 }
 
@@ -235,7 +249,8 @@ PARAMS_FLOW_CM: dict = {
     "divider": 1000,
     "precision": 3,
     "unit": UnitOfVolume.CUBIC_METERS,
-    "stateclass": SensorStateClass.MEASUREMENT,
+    "stateclass": SensorStateClass.TOTAL,
+    "deviceclass": SensorDeviceClass.VOLUME,
     "icon": "mdi:water"
 }
 
@@ -256,7 +271,6 @@ PARAMS_DAYS: dict = {
     "step": 1,
     "preciosion": 0,
     "unit": "Tage",
-    "stateclass": SensorStateClass.MEASUREMENT,
     "icon": "mdi:timelapse"
 }
 
@@ -264,7 +278,6 @@ PARAMS_MINUTES: dict = {
     "step": 1,
     "preciosion": 0,
     "unit": UnitOfTime.MINUTES,
-    "stateclass": SensorStateClass.MEASUREMENT,
     "icon": "mdi:timelapse"
 }
 
@@ -274,7 +287,6 @@ PARAMS_MINUTES2: dict = {
     "step": 5,
     "preciosion": 0,
     "unit": UnitOfTime.MINUTES,
-    "stateclass": SensorStateClass.MEASUREMENT,
     "icon": "mdi:timelapse"
 }
 
@@ -282,17 +294,15 @@ PARAMS_HOURS: dict = {
     "step": 1,
     "preciosion": 0,
     "unit": UnitOfTime.HOURS,
-    "stateclass": SensorStateClass.MEASUREMENT,
     "icon": "mdi:timelapse"
 }
 
 PARAMS_HOURS2: dict = {
-    "min": 1,
-    "max": 10,
+    "min": 0,
+    "max": 100,
     "step": 1,
     "preciosion": 0,
     "unit": UnitOfTime.HOURS,
-    "stateclass": SensorStateClass.MEASUREMENT,
     "icon": "mdi:timelapse"
 }
 
@@ -372,11 +382,23 @@ PARAMS_RESET: dict = {
 PARAMS_INFO: dict = {
     "icon": "mdi:information-box-outline"
 }
+PARAMS_INFO_TIMESTAMP: dict = {
+    #"deviceclass": SensorDeviceClass.TIMESTAMP, # Wert ist keine korrekte TIMESTAMP DEVICE_CLASS
+    "icon": "mdi:information-box-outline"
+}
 PARAMS_SWITCH_WF: dict = {
     "icon": "mdi:toggle-switch-outline"
 }
-PARAMS_DATETIME: dict = {
+PARAMS_TIMESTAMP: dict = {
     "deviceclass": SensorDeviceClass.TIMESTAMP,
+    "icon": "mdi:clock"
+}
+PARAMS_TIMESTAMP2: dict = {
+    "deviceclass": SensorDeviceClass.TIMESTAMP,
+    "icon": "mdi:information-box-outline"
+}
+PARAMS_DATETIME: dict = {
+    #"deviceclass": SensorDeviceClass.TIMESTAMP,
     "icon": "mdi:clock"
 }
 PARAMS_DATETIME_BUTTON: dict = {
@@ -397,16 +419,18 @@ REST_SYS_ITEMS: list[RestItem] = [
 
 #Select    
 #    RestItem( address_read="5700", read_bytes = 1, read_index=0, address_write="5700", write_bytes = 1, write_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.NUMBER, device=DEVICES.SYS, params= PARAMS_DAYS,translation_key="salt_warning"),
-    RestItem( address_read="5E00", read_bytes = 2, read_index=0,  mformat=FORMATS.STATUS, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOWRATE2, resultlist=ABSENCE_LIMIT_MAX_WATERFLOWRATE_LIST, translation_key="absence_limit_max_waterflowrate"),
-    RestItem( address_read="5E00", read_bytes = 2, read_index=2,  mformat=FORMATS.STATUS, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOW, resultlist=ABSENCE_LIMIT_MAX_WATERFLOW_LIST, translation_key="absence_limit_max_water_flow"),
-    RestItem( address_read="5E00", read_bytes = 2, read_index=4,  mformat=FORMATS.STATUS, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MINUTES2, resultlist=ABSENCE_LIMIT_MAX_WATERFLOWTIME_LIST, translation_key="absence_limit_max_waterflow_time"),
-    RestItem( address_write="5300", write_bytes = 1, write_index=0, mformat=FORMATS.STATUS_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOURS2, resultlist=SLEEP_MODE_DURATION_LIST, translation_key="sleep_mode_duration"),
-    RestItem( address_write="5600", write_bytes = 1, write_index=0,  mformat=FORMATS.STATUS_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOLIDAY_ON, resultlist=HOLIDAY_MODE_WRITE_LIST, translation_key="holiday_mode_write"),
-    RestItem( address_read="6500", read_bytes = 1, read_index=0, address_write="5B00", write_bytes = 1, write_index=0,  mformat=FORMATS.STATUS, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MICROLEAK, resultlist=AUTO_MICROLEAKAGECHECK_LIST, translation_key="auto_microleakage_check"),
+    RestItem( address_read="5E00", read_bytes = 2, read_index=0,  mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOWRATE2, resultlist=ABSENCE_LIMIT_MAX_WATERFLOWRATE_LIST, translation_key="absence_limit_max_waterflowrate"),
+    RestItem( address_read="5E00", read_bytes = 2, read_index=2,  mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOW, resultlist=ABSENCE_LIMIT_MAX_WATERFLOW_LIST, translation_key="absence_limit_max_water_flow"),
+    RestItem( address_read="5E00", read_bytes = 2, read_index=4,  mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MINUTES2, resultlist=ABSENCE_LIMIT_MAX_WATERFLOWTIME_LIST, translation_key="absence_limit_max_waterflow_time"),
+    RestItem( address_write="5300", write_bytes = 1, write_index=0, mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOURS2, resultlist=SLEEP_MODE_DURATION_LIST, translation_key="sleep_mode_duration"),
+    RestItem( address_write="5600", write_bytes = 1, write_index=0,  mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOLIDAY_ON, resultlist=HOLIDAY_MODE_WRITE_LIST, translation_key="holiday_mode_write"),
+    RestItem( address_read="6500", read_bytes = 1, read_index=0, address_write="5B00", write_bytes = 1, write_index=0,  mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MICROLEAK, resultlist=AUTO_MICROLEAKAGECHECK_LIST, translation_key="auto_microleakage_check"),
 
-    RestItem( mformat=FORMATS.STATUS_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOWRATE2, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOWRATE_LIST, translation_key="leakageprotection_max_waterflowrate"),
-    RestItem( mformat=FORMATS.STATUS_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOW, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOW_LIST, translation_key="leakageprotection_max_waterflow"),
-    RestItem( mformat=FORMATS.STATUS_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MINUTES2, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOWTIME_LIST, translation_key="leakageprotection_max_waterflowtime"),
+    RestItem( mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOWRATE2, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOWRATE_LIST, translation_key="leakageprotection_max_waterflowrate"),
+    RestItem( mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOW, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOW_LIST, translation_key="leakageprotection_max_waterflow"),
+    RestItem( mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MINUTES2, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOWTIME_LIST, translation_key="leakageprotection_max_waterflowtime"),
+
+    RestItem( mformat=FORMATS.SELECT_INTERNAL, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOURS2, resultlist=FLUSH_INTERVAL_LIST, translation_key="flush_interval"),
 #Sensor
 #    RestItem( address_read="5600", read_bytes = 2, read_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_MASS, translation_key="salt_storage_mass"),
 #    RestItem( address_read="5600", read_bytes = 2, read_index=2, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_DAYS,translation_key="salt_storage_days"),
@@ -419,10 +443,12 @@ REST_SYS_ITEMS: list[RestItem] = [
     RestItem( address_read="2500", read_bytes = 2, read_index=2, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_DAYS,translation_key="operating_days"),
     RestItem( address_read="6400", read_bytes = 1, read_index=0, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_STATUS, translation_key="learning_mode_status"),
     RestItem( address_read="6400", read_bytes = 2, read_index=1, mformat=FORMATS.NUMBER, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_FLOW_CM, translation_key="learning_water_quantity"),
-    RestItem( address_read="0E00", read_bytes = 4, read_index=0, mformat=FORMATS.TIMESTAMP, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_INFO, translation_key="install_date"),
+    RestItem( address_read="0E00", read_bytes = 4, read_index=0, mformat=FORMATS.TIMESTAMP, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_INFO_TIMESTAMP, translation_key="install_date_judo"),
 
 #Time_Date
     RestItem( address_read="5900", read_bytes = 6, read_index=0, mformat=FORMATS.DATETIME_JUDO, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_DATETIME, translation_key="datetime_judo"),
+    RestItem( mformat=FORMATS.SENSOR_INTERNAL_TIMESTAMP, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_TIMESTAMP, translation_key="last_reset_flush_interval"),
+    RestItem( mformat=FORMATS.SENSOR_INTERNAL_TIMESTAMP, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_TIMESTAMP2, translation_key="install_date"),
 
 #Button
     RestItem(address_write="5100", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_CLOSE, translation_key="leakage_protection_close"),
@@ -436,6 +462,7 @@ REST_SYS_ITEMS: list[RestItem] = [
     RestItem(address_write="6300", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_RESET, translation_key="message_reset"),
     
     RestItem(address_write="5A00", write_bytes = 6, write_index=0, mformat=FORMATS.BUTTON_WO_DATETIME, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_DATETIME_BUTTON, translation_key="set_judo_time"),
+    RestItem(mformat=FORMATS.BUTTON_INTERNAL, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_RESET, translation_key="reset_flush_interval"),
 
 # RestItem(mformat=FORMATS.STATUS, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MASS_REFILL, resultlist=SALT_MASS, translation_key="salt_refill_mass"),
 #Switch

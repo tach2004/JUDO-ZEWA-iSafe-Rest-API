@@ -205,9 +205,14 @@ class RestObject:
             return None
         if self._rest_item.format is FORMATS.SWITCH_INTERNAL:
             return None
-        if self._rest_item.format is FORMATS.STATUS_WO:
+        if self._rest_item.format is FORMATS.SELECT_WO:
             return None
-
+        if self._rest_item.format is FORMATS.SELECT_INTERNAL:
+            return None
+        if self._rest_item.format is FORMATS.SENSOR_INTERNAL:
+            return None
+        if self._rest_item.format is FORMATS.SENSOR_INTERNAL_TIMESTAMP:
+            return None
         res = await self._rest_api.get_rest(self._rest_item.address_read)
 
         if res is None:
@@ -241,6 +246,8 @@ class RestObject:
             case FORMATS.TEXT:
                 return bytearray.fromhex(big_endian).decode()
             case FORMATS.STATUS:
+                return self._rest_item.get_translation_key_from_number(int(little_endian, 16))
+            case FORMATS.SELECT:
                 return self._rest_item.get_translation_key_from_number(int(little_endian, 16))
             case FORMATS.DATETIME_JUDO:
                 try:
@@ -278,9 +285,17 @@ class RestObject:
         if self._rest_item.format is FORMATS.BUTTON:
             await self._rest_api.set_rest(self._rest_item.address_write, "")
             return
+        if self._rest_item.format is FORMATS.BUTTON_INTERNAL:
+            return
         if self._rest_item.format is FORMATS.NUMBER_INTERNAL:
             return
         if self._rest_item.format is FORMATS.SWITCH_INTERNAL:
+            return
+        if self._rest_item.format is FORMATS.SELECT_INTERNAL:
+            return
+        if self._rest_item.format is FORMATS.SENSOR_INTERNAL:
+            return
+        if self._rest_item.format is FORMATS.SENSOR_INTERNAL_TIMESTAMP:
             return
         if value is None:
             return
@@ -302,7 +317,11 @@ class RestObject:
                 towrite = self.format_int_message(
                     self._rest_item.get_number_from_translation_key(value), True
                 )
-            case FORMATS.STATUS_WO:
+            case FORMATS.SELECT:
+                towrite = self.format_int_message(
+                    self._rest_item.get_number_from_translation_key(value), True
+                )
+            case FORMATS.SELECT_WO:
                 towrite = self.format_int_message(
                     self._rest_item.get_number_from_translation_key(value), True
                 )

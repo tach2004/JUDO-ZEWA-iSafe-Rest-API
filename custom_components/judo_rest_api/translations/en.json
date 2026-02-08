@@ -85,6 +85,9 @@
             },
             "set_judo_time": {
                 "name": "set judo time"  
+            },
+            "reset_flush_interval": {
+                "name": "Reset flush interval"  
             }
         },
         "select": {
@@ -236,7 +239,19 @@
                     "4_5_h": "4.5 hours",
                     "5_h": "5 hours"
                 }  
-            }
+            },
+            "flush_interval": {
+                "name": "Flush interval",
+                "state": {
+                    "deactivated": "Deactivated",
+                    "1m": "1 month",
+                    "2m": "2 months",
+                    "3m": "3 months",
+                    "4m": "4 months",
+                    "6m": "6 months",
+                    "12m": "12 months"
+                }
+            } 
         },
         "sensor": {
             "device_number": {
@@ -292,6 +307,9 @@
             "operating_hours": {
                 "name": "Operating hours"
             },
+            "install_date_judo": {
+                "name": "Date of commissioning from Judo"
+            },
             "install_date": {
                 "name": "Date of commissioning"
             },
@@ -309,7 +327,10 @@
             },
             "datetime_judo": {
                 "name": "date & time judo"
-            }  
+            },
+            "last_reset_flush_interval": {
+                "name": "Last reset flush interval"
+            }
         },
         "switch": {
             "water_flow_check_on_off": {

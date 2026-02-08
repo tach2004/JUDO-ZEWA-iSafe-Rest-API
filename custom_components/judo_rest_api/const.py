@@ -48,16 +48,20 @@ class FormatConstants:
     NUMBER_INTERNAL = "number_internal" #Only internal Number without read and write to the api
     TEXT = "text"
     STATUS = "status" 
-    STATUS_WO = "status_wo"  #When a select value should only be written to API and not read
+    SELECT = "select"
+    SELECT_WO = "select_wo"  #When a select value should only be written to API and not read
+    SELECT_INTERNAL = "select_internal" #Only internal Select without read and write to the api
     UNKNOWN = "unknown"
     SWITCH = "Switch"
-    SWITCH_INTERNAL = "Switch_internal" #Only internal Switch without read and write to the api
+    SWITCH_INTERNAL = "switch_internal" #Only internal Switch without read and write to the api
     BUTTON = "Button"
     BUTTON_INTERNAL = "button_interal"
     BUTTON_WO_DATETIME = "button_wo_datetime"
     TIMESTAMP = "Timestamp"
     SW_VERSION = "SW_Version"
     DATETIME_JUDO = "datetime_judo"
+    SENSOR_INTERNAL = "sensor_internal" ##Only internal Sensor without read and write to the api
+    SENSOR_INTERNAL_TIMESTAMP = "sensor_internal_timestamp" #Only internal Sensor as timestamp without read and write to the api
 
 
 FORMATS = FormatConstants()

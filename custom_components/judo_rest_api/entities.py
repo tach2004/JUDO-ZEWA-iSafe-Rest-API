@@ -24,6 +24,8 @@ from .restobject import RestAPI, RestObject
 
 from .storage import save_last_written_value, load_last_written_values, PERSISTENT_ENTITIES
 
+from homeassistant.util import dt as dt_util
+
 logging.basicConfig()
 log = logging.getLogger(__name__)
 
@@ -84,8 +86,17 @@ class MyEntity(Entity):
         self._rest_api = rest_api
 
         match self._rest_item.format:
-            case FORMATS.STATUS |FORMATS.STATUS_WO | FORMATS.TEXT | FORMATS.TIMESTAMP | FORMATS.SW_VERSION | FORMATS.DATETIME_JUDO:
+            #case FORMATS.STATUS | FORMATS.TEXT | FORMATS.SW_VERSION:
+            #case FORMATS.STATUS |FORMATS.SELECT_WO | FORMATS.SELECT | FORMATS.TEXT | FORMATS.TIMESTAMP | FORMATS.SW_VERSION | FORMATS.DATETIME_JUDO | FORMATS.SELECT_INTERNAL | FORMATS.SENSOR_INTERNAL_TIMESTAMP:
+            case FORMATS.STATUS | FORMATS.TEXT | FORMATS.TIMESTAMP | FORMATS.SW_VERSION | FORMATS.DATETIME_JUDO | FORMATS.SENSOR_INTERNAL_TIMESTAMP:
                 self._divider = 1
+                if (
+                    self._rest_item.format
+                    in (FORMATS.STATUS, FORMATS.TEXT, FORMATS.TIMESTAMP, FORMATS.SW_VERSION, FORMATS.DATETIME_JUDO, FORMATS.SENSOR_INTERNAL_TIMESTAMP)
+                    and self._rest_item.params is not None
+                ):
+                    self._attr_device_class = self._rest_item.params.get("deviceclass", None)
+                    self._attr_state_class = None
             case _:
                 # default state class to record all entities by default
                 self._attr_state_class = SensorStateClass.MEASUREMENT
@@ -152,6 +163,24 @@ class MySensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
         self.idx = idx
         MyEntity.__init__(self, config_entry, rest_item, coordinator.rest_api)
 
+    ##Spülintervall
+    async def async_added_to_hass(self) -> None:
+        """Restore persisted internal timestamp when entity is added."""
+        await super().async_added_to_hass()
+
+        if self._rest_item.translation_key == "last_reset_flush_interval":
+            stored_values = await load_last_written_values(self.hass)
+            iso = stored_values.get("last_reset_flush_interval")
+            if iso:
+                dt_utc = dt_util.parse_datetime(iso)
+                if dt_utc is not None and dt_utc.tzinfo is None:
+                    dt_utc = dt_utc.replace(tzinfo=dt_util.UTC)
+
+                # RestItem + Entity sofort synchron halten
+                self._rest_item.state = dt_utc
+                self._attr_native_value = dt_utc
+                self.async_write_ha_state()
+    ##
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
@@ -321,7 +350,35 @@ class MyButtonEntity(CoordinatorEntity, ButtonEntity, MyEntity):  # pylint: disa
             
             except Exception as e:
                 log.error("Fehler beim Erzeugen oder Senden der Uhrzeit: %s", e)
-            
+        ##Spülintervall        
+        elif self._rest_item.translation_key == "reset_flush_interval":
+            try:
+                now_utc = dt_util.utcnow()
+
+                # Persistieren (ISO-Format) unter dem Sensor-Key
+                await save_last_written_value(
+                    self.hass,
+                    "last_reset_flush_interval",
+                    now_utc.isoformat(),
+                )
+
+                # Sofort im Coordinator/RestItem reflektieren (UI aktualisiert sofort)
+                self.coordinator.set_internal_timestamp("last_reset_flush_interval", now_utc)
+
+                # Alte Meldung (falls vorhanden) schließen
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "dismiss",
+                    {"notification_id": "judo_flush_interval_due"},
+                    blocking=False,
+                )
+
+                # Direkt neu prüfen (falls Intervall z.B. geändert/deaktiviert wurde)
+                self.hass.async_create_task(self.coordinator.async_check_flush_interval_due())
+
+            except Exception as e:
+                log.error("Fehler beim Reset des Spülintervalls: %s", e)
+        ##
         else:
             ro = RestObject(self._rest_api, self._rest_item)
             await ro.setvalue()  # rest_item.state will be set inside ro.setvalue
@@ -498,9 +555,17 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
                 self._rest_item.state = option #schreibt den state direkt in den coordinator ohne über die API zu lesen
                 self._attr_current_option = self._rest_item.state
                 self.async_write_ha_state()
+
             except Exception as e:
                 log.error("Fehler beim Senden an Judo: %s", e)
-
+            ##Spülintervall
+            try: 
+                # Flush-Intervall: nach Änderung sofort neu bewerten (Meldung ggf. löschen/erzeugen)
+                if self._rest_item.translation_key == "flush_interval":
+                    self.hass.async_create_task(self.coordinator.async_check_flush_interval_due())
+            except Exception as f:
+                log.error("Fehler beim löschen/erzeugen flush_interval: %s", f)                 
+            ##
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""

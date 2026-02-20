@@ -749,6 +749,11 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
                     self.async_write_ha_state()
                 else:
                     self._attr_native_value = 0
+                    # Initialen 0-Wert auch an HA publishen (sonst bleibt "unknown")
+                    if self._previous_value is None:
+                        self._previous_value = current_value
+                        self._previous_time = current_time
+                    self.async_write_ha_state()
             else:
                 log.debug("Berechnung aktuell deaktiviert (läuft über 10s-Task)")
         else:

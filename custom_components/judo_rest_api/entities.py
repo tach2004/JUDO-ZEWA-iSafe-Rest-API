@@ -255,6 +255,27 @@ class MySwitchEntity(CoordinatorEntity, SwitchEntity, MyEntity):  # pylint: disa
         self._idx = idx
         MyEntity.__init__(self, config_entry, rest_item, coordinator.rest_api)
 
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass (restore last state for persistent switches)."""
+        await super().async_added_to_hass()
+
+        if self._rest_item.translation_key in PERSISTENT_ENTITIES:
+            stored_values = await load_last_written_values(self.hass)
+            if self._rest_item.translation_key in stored_values:
+                stored = stored_values[self._rest_item.translation_key]
+
+                # robust: akzeptiert True/False oder 0/1 oder "0"/"1"
+                if isinstance(stored, str):
+                    stored_norm = stored.strip().lower()
+                    if stored_norm in ("1", "true", "on", "yes"):
+                        stored = True
+                    elif stored_norm in ("0", "false", "off", "no"):
+                        stored = False
+
+                self._rest_item.state = stored
+                self._attr_is_on = bool(stored)
+                self.async_write_ha_state()
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
@@ -270,6 +291,8 @@ class MySwitchEntity(CoordinatorEntity, SwitchEntity, MyEntity):  # pylint: disa
         self._attr_is_on = True ##Ersetzt Zeile darunter weil nicht mehr über Api sondern nur intern
         #self._attr_is_on = self._rest_item.state ####Wird nicht mehr durch API geupdatet!
         self.async_write_ha_state()
+        if self._rest_item.translation_key in PERSISTENT_ENTITIES:
+            await save_last_written_value(self.hass, self._rest_item.translation_key, True)
 
     async def async_turn_off(self, **kwargs):
         """Turn the entity off."""
@@ -279,6 +302,8 @@ class MySwitchEntity(CoordinatorEntity, SwitchEntity, MyEntity):  # pylint: disa
         self._attr_is_on = False ##Ersetzt Zeile darunter weil nicht mehr über Api sondern nur intern
         #self._attr_is_on = self._rest_item.state   ####Wird nicht mehr durch API geupdatet!
         self.async_write_ha_state()
+        if self._rest_item.translation_key in PERSISTENT_ENTITIES:
+            await save_last_written_value(self.hass, self._rest_item.translation_key, False)
 
     @property
     def device_info(self) -> DeviceInfo:

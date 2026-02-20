@@ -240,7 +240,7 @@
                 }
             },
             "flush_interval": {
-                "name": "Spülinterval",
+                "name": "Spülintervall",
                 "state": {
                     "deactivated": "Deaktiviert",
                     "1m": "1 Monat",

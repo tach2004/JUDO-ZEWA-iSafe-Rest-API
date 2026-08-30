@@ -15,6 +15,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.translation import async_translate_state
 
 from .configentry import MyConfigEntry
 from .const import CONF, CONST, FORMATS
@@ -128,14 +129,27 @@ class MyEntity(Entity):
                 self._attr_icon = icon
 
     def my_device_info(self) -> DeviceInfo:
-        """Build the device info."""
+        """Build the device info. Anzeige oben links unter Geräteinformationen"""
+
+        device_type = self.coordinator.get_value_from_item("device_type")
+        device_number = self.coordinator.get_value_from_item("device_number")
+
         return {
             "identifiers": {(CONST.DOMAIN, self._dev_device)},
             "translation_key": self._dev_device,
             "translation_placeholders": self._dev_translation_placeholders,
-            "sw_version": self.coordinator.get_value_from_item("software_version"),
-            "model": self.coordinator.get_value_from_item("device_type"),
-            "manufacturer": "Judo",
+            "sw_version": self.coordinator.get_value_from_item("software_version"), #Sotwareversion zb 1.39 
+                #Model = Gerätetyp zb Zewa/Prom iSafe...
+            "model": async_translate_state( 
+                hass=self.hass,
+                state=device_type,
+                domain="sensor",
+                platform=CONST.DOMAIN,
+                translation_key="device_type",
+                device_class=None,
+            ),        
+            "manufacturer": "JUDO Wasseraufbereitung GmbH",
+            "serial_number": (str(int(device_number)) if device_number is not None else None), #Seriennummer Judo Gerät 
         }
 
     @property

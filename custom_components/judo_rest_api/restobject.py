@@ -17,6 +17,17 @@ It contains a REST Client for setting and getting REST response values
 #   6. set_rest(): dito + "async with self._limiter"
 #   7. close():   schliesst die Session (verhindert Socket-Leaks bei Reload)
 #
+#  NEU (Sammelabfrage), markiert mit "===== GEAENDERT (Sammelabfrage) =====":
+#   8. Zyklus-Zwischenspeicher: Adressen, die von mehreren Items gelesen
+#      werden (5E00 von drei, 6400 von zwei Items), werden pro Coordinator-
+#      Durchlauf nur EINMAL von der API geholt. Welche Adressen das sind,
+#      meldet der Coordinator per set_cacheable_commands().
+#   9. set_rest() verwirft den Zwischenspeicher nach jedem Schreibzugriff.
+#  10. Der eigentliche HTTP-Aufruf steckt jetzt in der Hilfsmethode
+#      _request(); "Send command" wird dort direkt vor dem echten Request
+#      geloggt (vorher stand die Zeile vor der Bremse, dadurch sah der Log
+#      so aus, als gingen alle Kommandos gleichzeitig raus).
+#
 #  UNVERAENDERT geblieben ist alles Uebrige, insbesondere:
 #   - write_value()  (wird von entities.py:494 und :563 benutzt)
 #   - saemtliche FORMATS-Filter in value() und setvalue()
@@ -114,6 +125,37 @@ class RestAPI:
             else nullcontext()
         )
         # ===== GEAENDERT (gather/session) - ENDE =====
+        # ===== GEAENDERT (Sammelabfrage) - START =====
+        # Zwischenspeicher fuer Adressen, die innerhalb EINES Coordinator-
+        # Durchlaufs mehrfach gelesen werden. Ausserhalb eines Durchlaufs ist
+        # er None - dann wird nie zwischengespeichert. Dadurch bekommt der
+        # 11s-Wasserfluss-Task immer einen frischen water_total-Wert.
+        self._cycle_cache = None
+        self._cacheable = frozenset()
+        # Eine Sperre pro Adresse: verhindert, dass zwei Items dieselbe
+        # Adresse gleichzeitig holen. Ohne sie wuerde der zweite Task noch
+        # ins Leere greifen, weil der Erste den Wert erst nach seinem
+        # Request ablegt. Wird VOR der Parallelitaets-Bremse genommen -
+        # ein Task, der die Bremse haelt, wartet nie auf eine Sperre,
+        # daher kann es keine Verklemmung geben.
+        self._cache_locks = {}
+        # ===== GEAENDERT (Sammelabfrage) - ENDE =====
+
+    # ===== GEAENDERT (Sammelabfrage) - START =====
+    def set_cacheable_commands(self, commands) -> None:
+        """Adressen festlegen, die pro Durchlauf nur einmal gelesen werden."""
+        self._cacheable = frozenset(c for c in commands if c)
+        if self._cacheable:
+            log.debug("Sammelabfrage aktiv fuer: %s", sorted(self._cacheable))
+
+    def begin_read_cycle(self) -> None:
+        """Zwischenspeicher aktivieren (Aufruf am Anfang von fetch_data)."""
+        self._cycle_cache = {}
+
+    def end_read_cycle(self) -> None:
+        """Zwischenspeicher verwerfen (Aufruf am Ende von fetch_data)."""
+        self._cycle_cache = None
+    # ===== GEAENDERT (Sammelabfrage) - ENDE =====
 
     async def login(self) -> None:
         """Log into the portal. Create cookie to stay logged in for the session."""
@@ -133,15 +175,43 @@ class RestAPI:
         """get raw response from REST api"""
         if command is None:
             return None
+        # ===== GEAENDERT (Sammelabfrage) - START =====
+        # Nur Adressen, die der Coordinator als mehrfach gelesen gemeldet hat,
+        # und nur waehrend eines laufenden Durchlaufs.
+        cache = self._cycle_cache
+        if cache is not None and command in self._cacheable:
+            if command in cache:
+                log.debug("Sammelabfrage: %s aus diesem Durchlauf", command)
+                return cache[command]
+            lock = self._cache_locks.setdefault(command, asyncio.Lock())
+            async with lock:
+                # Nach dem Warten erneut pruefen - in der Zwischenzeit hat
+                # ein anderer Task die Adresse in aller Regel schon geholt.
+                if command in cache:
+                    log.debug("Sammelabfrage: %s aus diesem Durchlauf", command)
+                    return cache[command]
+                res = await self._request(command)
+                if res is not None:
+                    cache[command] = res
+                return res
+        return await self._request(command)
+
+    async def _request(self, command: str):
+        """Fuehrt den eigentlichen HTTP-Aufruf aus (frueher Rumpf von get_rest)."""
+        # ===== GEAENDERT (Sammelabfrage) - ENDE =====
         response = None
         try:
-            log.debug("Send command %s", command)
             url = self._api_url + command
             # ===== GEAENDERT (gather/session) - START =====
             # Session statt requests.get + Begrenzung der Parallelitaet.
             # Nur der Netzwerk-Call haelt einen Slot; response.json() unten
             # ist reine CPU-Arbeit und darf keinen Slot blockieren.
             async with self._limiter:
+                # ===== GEAENDERT (Sammelabfrage) - START =====
+                # Log steht jetzt direkt vor dem echten Request, damit der
+                # Debug-Log den tatsaechlichen Ablauf zeigt.
+                log.debug("Send command %s", command)
+                # ===== GEAENDERT (Sammelabfrage) - ENDE =====
                 response = await self._hass.async_add_executor_job(
                     partial(self._session.get, url=url, timeout=10)
                 )
@@ -186,6 +256,12 @@ class RestAPI:
                 )
             # ===== GEAENDERT (gather/session) - ENDE =====
             res = await self._hass.async_add_executor_job(response.json)
+            # ===== GEAENDERT (Sammelabfrage) - START =====
+            # Nach einem Schreibzugriff sind zwischengespeicherte Rohwerte
+            # dieses Durchlaufs veraltet.
+            if self._cycle_cache is not None:
+                self._cycle_cache.clear()
+            # ===== GEAENDERT (Sammelabfrage) - ENDE =====
             return res["data"]
         except Exception:
             log.warning("Connection to Judo Zewa failed")

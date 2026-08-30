@@ -1,5 +1,25 @@
 """The Update Coordinator for the RestItems."""
 
+# =============================================================================
+#  AENDERUNGEN gegenueber der bisherigen Fassung (alle mit
+#  "===== GEAENDERT (gather/session) =====" markiert):
+#
+#   1. Neue Methode _fetch_item(): enthaelt den try/except-Block, der vorher
+#      im Rumpf der for-Schleife stand.
+#   2. fetch_data(): die sequenzielle for-Schleife wurde durch
+#      asyncio.gather() ersetzt - alle Items werden parallel gelesen.
+#
+#  UNVERAENDERT geblieben ist alles Uebrige, insbesondere:
+#   - die komplette Spuelintervall-Logik (_add_months,
+#     _get_flush_interval_months, _ensure_last_reset_flush_interval,
+#     async_check_flush_interval_due, _setup_flush_interval_daily_check)
+#   - set_internal_timestamp() und _try_freeze_install_date_from_judo()
+#   - der Zeitabweichungs-Check inkl. _last_time_drift und der Meldung
+#   - _async_setup() inkl. Wiederherstellung des Installationsdatums
+#   - die vollstaendige FORMATS-Filterliste in get_value()
+#   - _previous_water_total, _default_scan_interval und alle Imports
+# =============================================================================
+
 import asyncio
 import logging
 ##
@@ -257,6 +277,21 @@ class MyCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self.async_check_flush_interval_due())
     ##
 
+    # ===== GEAENDERT (gather/session) - START =====
+    # Neue Hilfsmethode: enthaelt exakt den try/except-Block, der vorher
+    # direkt in der for-Schleife von fetch_data() stand. Dadurch kann jedes
+    # Item als eigener Task laufen, ohne dass ein Fehler die anderen kippt.
+    async def _fetch_item(self, item: RestItem) -> None:
+        """Fetch a single item value, logging warnings on failure."""
+        try:
+            await self.get_value(item)
+        except Exception:
+            log.warning(
+                "connection to Judo Zewa failed for %s",
+                item.translation_key,
+            )
+    # ===== GEAENDERT (gather/session) - ENDE =====
+
     async def fetch_data(self, idx=None):
         """Fetch all values from the REST."""
         # if idx is not None:
@@ -271,16 +306,20 @@ class MyCoordinator(DataUpdateCoordinator):
             to_update = idx
 
         # log.info("Start Scan")
-        for index in to_update:
-            item = self._restitems[index]
-            try:
-                await self.get_value(item)
-
-            except Exception:
-                log.warning(
-                    "connection to Judo Zewa failed for %s",
-                    item.translation_key,
-                )
+        # ===== GEAENDERT (gather/session) - START =====
+        # Vorher: sequenzielle for-Schleife, ein Request nach dem anderen.
+        # Jetzt: alle Items parallel per asyncio.gather.
+        #
+        # WICHTIG: gather wartet auf ALLE Tasks. Der Zeitabweichungs-Check und
+        # das Einfrieren des Installationsdatums weiter unten laufen also
+        # weiterhin garantiert erst, wenn saemtliche Werte gelesen sind -
+        # genau wie bei der alten Schleife.
+        #
+        # Die Anzahl gleichzeitiger Requests wird in restobject.py ueber
+        # MAX_PARALLEL_REQUESTS begrenzt (Standard: 4).
+        items = [self._restitems[index] for index in to_update]
+        await asyncio.gather(*[self._fetch_item(item) for item in items])
+        # ===== GEAENDERT (gather/session) - ENDE =====
         #Zeitabweichung prüfen – nur einmalig nach dem Durchlauf
         judo_time = self.get_value_from_item("datetime_judo")
         ha_time = datetime.now().replace(microsecond=0)

@@ -7,7 +7,17 @@
 #   1. Neue Methode _fetch_item(): enthaelt den try/except-Block, der vorher
 #      im Rumpf der for-Schleife stand.
 #   2. fetch_data(): die sequenzielle for-Schleife wurde durch
-#      asyncio.gather() ersetzt - alle Items werden parallel gelesen.
+#      asyncio.gather() ersetzt. Wie viele Requests wirklich gleichzeitig
+#      laufen, steuert MAX_PARALLEL_REQUESTS in restobject.py (aktuell 1,
+#      also faktisch sequenziell - der JUDO beantwortet ohnehin nur eine
+#      Anfrage gleichzeitig).
+#
+#  NEU, markiert mit "===== GEAENDERT (Read-Once) =====" bzw.
+#  "===== GEAENDERT (Sammelabfrage) =====":
+#   3. READ_ONCE_KEYS: unveraenderliche Werte werden nur im ersten Zyklus
+#      gelesen und danach uebersprungen.
+#   4. Mehrfach gelesene Adressen (5E00, 6400) werden pro Durchlauf nur
+#      einmal von der API geholt; die Erkennung passiert automatisch.
 #
 #  UNVERAENDERT geblieben ist alles Uebrige, insbesondere:
 #   - die komplette Spuelintervall-Logik (_add_months,
@@ -25,6 +35,9 @@ import logging
 ##
 import calendar
 ##
+# ===== GEAENDERT (Sammelabfrage) - START =====
+from collections import Counter
+# ===== GEAENDERT (Sammelabfrage) - ENDE =====
 from datetime import timedelta
 from datetime import datetime
 from datetime import time
@@ -44,6 +57,75 @@ from .storage import save_last_written_value, load_last_written_values, PERSISTE
 ##
 logging.basicConfig()
 log = logging.getLogger(__name__)
+
+# ===== GEAENDERT (Read-Once) - START =====
+# +---------------------------------------------------------------------+
+# |  Werte, die sich im laufenden Betrieb NIE aendern.                  |
+# |                                                                     |
+# |  Sie werden nur im ersten Durchlauf nach dem Start gelesen und       |
+# |  danach uebersprungen. Der gelesene Wert bleibt im RestItem stehen,  |
+# |  die Sensoren zeigen also unveraendert weiter an.                    |
+# |                                                                     |
+# |  Schlaegt der erste Versuch fehl, wird im naechsten Durchlauf erneut |
+# |  versucht - erst ein erfolgreicher Read gilt als erledigt.           |
+# |                                                                     |
+# |  Nach einem Firmware-Update des JUDO einmal HA neu starten bzw. die  |
+# |  Integration neu laden, damit software_version neu gelesen wird.     |
+# |                                                                     |
+# |  Soll ein Wert doch jede Minute gelesen werden: Zeile hier loeschen. |
+# +---------------------------------------------------------------------+
+READ_ONCE_KEYS = frozenset({
+    "device_type",        # FF00 - Geraetetyp
+    "device_number",      # 0600 - Seriennummer
+    "software_version",   # 0100 - Firmware-Version
+    "install_date_judo",  # 0E00 - Installationsdatum
+})
+# ===== GEAENDERT (Read-Once) - ENDE =====
+
+# ============================================================================
+# ==                                                                        ==
+# ==   ABFRAGE-INTERVALLE  -  hier stellst du ein, wie oft gelesen wird     ==
+# ==                                                                        ==
+# ==   Zahl = "nur in jedem N-ten Durchlauf lesen".                         ==
+# ==   Bei 60 s Abfrageintervall bedeutet 10 also etwa alle 10 Minuten.     ==
+# ==                                                                        ==
+# ==       1  = jeden Durchlauf (wie vorher, keine Einsparung)              ==
+# ==       5  = jeden 5. Durchlauf                                          ==
+# ==      10  = jeden 10. Durchlauf                                         ==
+# ==                                                                        ==
+# ==   Der ERSTE Durchlauf nach dem Start liest immer alles.                ==
+# ==   Wird ein Wert ueber HA geschrieben, setzt entities.py den State      ==
+# ==   sofort selbst - die Anzeige stimmt also auch zwischen zwei Reads.    ==
+# ==   Nur eine Aenderung direkt am Geraetepanel wird erst beim naechsten   ==
+# ==   planmaessigen Read sichtbar.                                         ==
+# ==                                                                        ==
+# ============================================================================
+
+INTERVALL_ABSENCE_LIMIT  = 10   # 5E00 - Abwesenheits-Grenzwerte (3 Items)
+INTERVALL_LEARNING       = 10   # 6400 - learning_mode_status + learning_water_quantity
+INTERVALL_MICROLEAKAGE   = 10   # 6500 - auto_microleakage_check
+INTERVALL_DATETIME_JUDO  = 5    # 5900 - Judo-Uhrzeit (nur fuer den Zeitabgleich)
+
+# Zuordnung Item -> Intervall. Die drei absence_limit_*-Items teilen sich
+# eine Adresse (5E00) und muessen deshalb dasselbe Intervall haben, damit
+# die Sammelabfrage weiter greift. Gleiches gilt fuer die beiden 6400-Items.
+READ_EVERY_N_CYCLES = {
+    "absence_limit_max_waterflowrate":  INTERVALL_ABSENCE_LIMIT,
+    "absence_limit_max_water_flow":     INTERVALL_ABSENCE_LIMIT,
+    "absence_limit_max_waterflow_time": INTERVALL_ABSENCE_LIMIT,
+    "learning_mode_status":             INTERVALL_LEARNING,
+    "learning_water_quantity":          INTERVALL_LEARNING,
+    "auto_microleakage_check":          INTERVALL_MICROLEAKAGE,
+    "datetime_judo":                    INTERVALL_DATETIME_JUDO,
+}
+
+# Diese Werte werden einmal beim Start und danach beim ersten Durchlauf
+# nach Tageswechsel (0 Uhr lokale HA-Zeit) gelesen.
+READ_ONCE_PER_DAY_KEYS = frozenset({
+    "operating_days",     # 2500 - zaehlt nur einmal taeglich hoch
+})
+
+# ============================================================================
 
 
 class MyCoordinator(DataUpdateCoordinator):
@@ -77,6 +159,28 @@ class MyCoordinator(DataUpdateCoordinator):
         self._restitems = api_items
         self._number_of_items = len(api_items)
         self._config_entry = p_config_entry
+        # ===== GEAENDERT (Read-Once) - START =====
+        # Merkt sich, welche READ_ONCE_KEYS bereits erfolgreich gelesen wurden.
+        self._read_once_done = set()
+        # Zaehlt die Durchlaeufe fuer READ_EVERY_N_CYCLES. Startet bei 0,
+        # damit der erste Durchlauf nach dem Start alles liest.
+        self._cycle_counter = 0
+        # Merkt sich pro Item das Datum des letzten Reads (READ_ONCE_PER_DAY).
+        self._daily_done = {}
+        # ===== GEAENDERT (Read-Once) - ENDE =====
+        # ===== GEAENDERT (Sammelabfrage) - START =====
+        # Adressen ermitteln, die von mehreren Items gelesen werden - bei
+        # diesem Geraet 5E00 (drei absence_limit_*-Items, read_index 0/2/4)
+        # und 6400 (learning_mode_status + learning_water_quantity).
+        # Die Antwort ist fuer alle Items identisch, nur der read_index
+        # unterscheidet sich. Sie wird deshalb pro Durchlauf einmal geholt.
+        address_counts = Counter(
+            item.address_read for item in api_items if item.address_read
+        )
+        my_api.set_cacheable_commands(
+            addr for addr, count in address_counts.items() if count > 1
+        )
+        # ===== GEAENDERT (Sammelabfrage) - ENDE =====
         self._previous_water_total = None
         self._default_scan_interval = timedelta(seconds=int(p_config_entry.data[CONF.SCAN_INTERVAL]))
         self._last_time_drift = None  # Letzte bekannte Zeitabweichung in Sekunden
@@ -283,8 +387,39 @@ class MyCoordinator(DataUpdateCoordinator):
     # Item als eigener Task laufen, ohne dass ein Fehler die anderen kippt.
     async def _fetch_item(self, item: RestItem) -> None:
         """Fetch a single item value, logging warnings on failure."""
+        # ===== GEAENDERT (Read-Once) - START =====
+        # Unveraenderliche Werte nach dem ersten erfolgreichen Read
+        # ueberspringen. item.state bleibt dabei erhalten.
+        key = item.translation_key
+        read_once = key in READ_ONCE_KEYS
+        if read_once and key in self._read_once_done:
+            return
+        # ===== GEAENDERT (Read-Once) - ENDE =====
+
+        # --- Zeitplan: nur einmal pro Tag (siehe READ_ONCE_PER_DAY_KEYS) ---
+        daily = key in READ_ONCE_PER_DAY_KEYS
+        heute = dt_util.as_local(dt_util.now()).date() if daily else None
+        if daily and self._daily_done.get(key) == heute:
+            return
+
+        # --- Zeitplan: nur in jedem N-ten Durchlauf (READ_EVERY_N_CYCLES) ---
+        jeder_nte = READ_EVERY_N_CYCLES.get(key, 1)
+        if jeder_nte > 1 and (self._cycle_counter % jeder_nte) != 0:
+            return
+
         try:
             await self.get_value(item)
+            if daily and item.state is not None:
+                self._daily_done[key] = heute
+            # ===== GEAENDERT (Read-Once) - START =====
+            # Nur ein erfolgreicher Read gilt als erledigt - schlaegt er
+            # fehl, wird im naechsten Durchlauf erneut versucht.
+            if read_once and item.state is not None:
+                self._read_once_done.add(key)
+                log.debug(
+                    "%s einmalig gelesen, wird ab jetzt uebersprungen", key
+                )
+            # ===== GEAENDERT (Read-Once) - ENDE =====
         except Exception:
             log.warning(
                 "connection to Judo Zewa failed for %s",
@@ -316,9 +451,25 @@ class MyCoordinator(DataUpdateCoordinator):
         # genau wie bei der alten Schleife.
         #
         # Die Anzahl gleichzeitiger Requests wird in restobject.py ueber
-        # MAX_PARALLEL_REQUESTS begrenzt (Standard: 4).
+        # MAX_PARALLEL_REQUESTS begrenzt (aktuell 1).
         items = [self._restitems[index] for index in to_update]
-        await asyncio.gather(*[self._fetch_item(item) for item in items])
+        # Judo-Uhrzeit VOR dem Durchlauf merken. Weiter unten laeuft der
+        # Zeitabweichungs-Check nur, wenn sich der Wert geaendert hat - also
+        # wenn datetime_judo in diesem Durchlauf wirklich frisch gelesen
+        # wurde. Sonst wuerde ein bis zu INTERVALL_DATETIME_JUDO Minuten
+        # alter Wert eine Abweichung vortaeuschen.
+        judo_time_vorher = self.get_value_from_item("datetime_judo")
+        # ===== GEAENDERT (Sammelabfrage) - START =====
+        # Zwischenspeicher nur fuer die Dauer dieses Durchlaufs aktivieren.
+        # Ausserhalb liest jeder Aufruf wieder frisch von der API - wichtig
+        # fuer den 11s-Wasserfluss-Task, der water_total selbst abfragt.
+        self._rest_api.begin_read_cycle()
+        try:
+            await asyncio.gather(*[self._fetch_item(item) for item in items])
+        finally:
+            self._rest_api.end_read_cycle()
+            self._cycle_counter += 1
+        # ===== GEAENDERT (Sammelabfrage) - ENDE =====
         # ===== GEAENDERT (gather/session) - ENDE =====
         #Zeitabweichung prüfen – nur einmalig nach dem Durchlauf
         judo_time = self.get_value_from_item("datetime_judo")
@@ -327,7 +478,10 @@ class MyCoordinator(DataUpdateCoordinator):
         log.debug("judo_time %s", judo_time)
         log.debug("ha_time %s", ha_time)
         
-        if isinstance(judo_time, datetime):
+        # Nur pruefen, wenn datetime_judo in diesem Durchlauf frisch gelesen
+        # wurde. Die Judo-Uhr laeuft sekundengenau weiter, ein neuer Read
+        # liefert also immer einen anderen Wert als der vorherige.
+        if isinstance(judo_time, datetime) and judo_time != judo_time_vorher:
             delta = abs((ha_time - judo_time).total_seconds())
             self._last_time_drift = delta
             log.debug("delta %s", delta)

@@ -4,10 +4,38 @@ A REST object that contains a REST item and communicates with the REST-API.
 It contains a REST Client for setting and getting REST response values
 """
 
+# =============================================================================
+#  AENDERUNGEN gegenueber der bisherigen Fassung (alle mit
+#  "===== GEAENDERT (gather/session) =====" markiert):
+#
+#   1. Imports: asyncio, contextlib.nullcontext, requests.adapters.HTTPAdapter
+#   2. Neue Konstante MAX_PARALLEL_REQUESTS (= die Stellschraube, s.u.)
+#   3. RestAPI.__init__: echte requests.Session mit Auth + Connection-Pool
+#      statt "self._session = None"; dazu der Parallelitaets-Limiter
+#   4. login():   requests.get(..., auth=...) -> self._session.get(...)
+#   5. get_rest(): dito + "async with self._limiter"
+#   6. set_rest(): dito + "async with self._limiter"
+#   7. close():   schliesst die Session (verhindert Socket-Leaks bei Reload)
+#
+#  UNVERAENDERT geblieben ist alles Uebrige, insbesondere:
+#   - write_value()  (wird von entities.py:494 und :563 benutzt)
+#   - saemtliche FORMATS-Filter in value() und setvalue()
+#   - die Cases SELECT, SELECT_WO, DATETIME_JUDO, NUMBER_WO, BUTTON_WO_DATETIME
+#   - order_hex_buffer(), format_int_message(), format_str_message()
+#   - alle Log-Texte und die bestehende Parsing-Logik
+# =============================================================================
+
+# ===== GEAENDERT (gather/session) - START =====
+# asyncio + nullcontext fuer die Parallelitaets-Begrenzung,
+# HTTPAdapter fuer den Connection-Pool der requests.Session.
+import asyncio
 import logging
+from contextlib import nullcontext
 from datetime import datetime
 from functools import partial
 import requests
+from requests.adapters import HTTPAdapter
+# ===== GEAENDERT (gather/session) - ENDE =====
 from homeassistant.core import HomeAssistant
 
 from .configentry import MyConfigEntry
@@ -16,6 +44,26 @@ from .items import RestItem
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
+
+# ===== GEAENDERT (gather/session) - START =====
+# +---------------------------------------------------------------------+
+# |  STELLSCHRAUBE: maximale Anzahl gleichzeitiger Requests zum JUDO.    |
+# |                                                                     |
+# |    4     -> Standard, schont das kleine Webinterface im JUDO         |
+# |    8     -> schneller, mehr Last auf dem Geraet                      |
+# |    0     -> UNBEGRENZT (alle Requests gleichzeitig, wie im           |
+# |             urspruenglichen gather-Vorschlag ohne Bremse)            |
+# |                                                                     |
+# |  Nur diesen einen Wert aendern - der Connection-Pool passt sich      |
+# |  automatisch an.                                                     |
+# +---------------------------------------------------------------------+
+MAX_PARALLEL_REQUESTS = 1
+
+# Groesse des HTTP-Connection-Pools. Sie folgt automatisch der Einstellung
+# oben; bei "unbegrenzt" ein Festwert, der ueber der Item-Anzahl liegt, damit
+# urllib3 keine "Connection pool is full"-Warnungen ins Log schreibt.
+_POOL_MAXSIZE = MAX_PARALLEL_REQUESTS if MAX_PARALLEL_REQUESTS else 32
+# ===== GEAENDERT (gather/session) - ENDE =====
 
 
 class RestAPI:
@@ -48,20 +96,35 @@ class RestAPI:
         )
         self._api_url = self._base_url + "/api/rest/"
         self._devicetype = None
-        self._session = None
         self._connected = False
+        # ===== GEAENDERT (gather/session) - START =====
+        # Vorher: self._session = None  ->  jede Anfrage baute eine eigene
+        # TCP-Verbindung inkl. neuer Basic-Auth auf.
+        # Jetzt: eine wiederverwendete Session mit Connection-Pool.
+        adapter = HTTPAdapter(pool_connections=1, pool_maxsize=_POOL_MAXSIZE)
+        self._session = requests.Session()
+        self._session.auth = (self._username, self._password)
+        self._session.mount("http://", adapter)
+        self._session.mount("https://", adapter)
+        # Bremse fuer parallele Requests (siehe MAX_PARALLEL_REQUESTS oben).
+        # Bei 0/None wird nullcontext benutzt -> gar keine Begrenzung.
+        self._limiter = (
+            asyncio.Semaphore(MAX_PARALLEL_REQUESTS)
+            if MAX_PARALLEL_REQUESTS
+            else nullcontext()
+        )
+        # ===== GEAENDERT (gather/session) - ENDE =====
 
     async def login(self) -> None:
         """Log into the portal. Create cookie to stay logged in for the session."""
 
+        # ===== GEAENDERT (gather/session) - START =====
+        # requests.get(..., auth=...) -> self._session.get(...)
+        # Die Auth steckt jetzt fest in der Session.
         _useless = await self._hass.async_add_executor_job(
-            partial(
-                requests.get,
-                url=self._base_url,
-                auth=(self._username, self._password),
-                timeout=10,
-            )
+            partial(self._session.get, url=self._base_url, timeout=10)
         )
+        # ===== GEAENDERT (gather/session) - ENDE =====
 
         # r = requests.get(self._base_url, auth=(self._username, self._password), timeout=10 )
         # log.warning(r.text)
@@ -74,14 +137,15 @@ class RestAPI:
         try:
             log.debug("Send command %s", command)
             url = self._api_url + command
-            response = await self._hass.async_add_executor_job(
-                partial(
-                    requests.get,
-                    url=url,
-                    auth=(self._username, self._password),
-                    timeout=10,
+            # ===== GEAENDERT (gather/session) - START =====
+            # Session statt requests.get + Begrenzung der Parallelitaet.
+            # Nur der Netzwerk-Call haelt einen Slot; response.json() unten
+            # ist reine CPU-Arbeit und darf keinen Slot blockieren.
+            async with self._limiter:
+                response = await self._hass.async_add_executor_job(
+                    partial(self._session.get, url=url, timeout=10)
                 )
-            )
+            # ===== GEAENDERT (gather/session) - ENDE =====
             log.debug("Response %s", response.status_code)
             status = response.status_code
             if status == 200:
@@ -112,14 +176,15 @@ class RestAPI:
             return None     
         try:
             url = self._api_url + command + towrite
-            response = await self._hass.async_add_executor_job(
-                partial(
-                    requests.get,
-                    url=url,
-                    auth=(self._username, self._password),
-                    timeout=2,
+            # ===== GEAENDERT (gather/session) - START =====
+            # Session statt requests.get + Begrenzung der Parallelitaet.
+            # Das timeout=2 gilt weiterhin nur fuer den HTTP-Request selbst,
+            # nicht fuer eine eventuelle Wartezeit auf einen freien Slot.
+            async with self._limiter:
+                response = await self._hass.async_add_executor_job(
+                    partial(self._session.get, url=url, timeout=2)
                 )
-            )
+            # ===== GEAENDERT (gather/session) - ENDE =====
             res = await self._hass.async_add_executor_job(response.json)
             return res["data"]
         except Exception:
@@ -141,6 +206,15 @@ class RestAPI:
 
     def close(self):
         """Close REST connection."""
+        # ===== GEAENDERT (gather/session) - START =====
+        # Die Session haelt jetzt offene Sockets - beim Entladen/Reload der
+        # Integration muessen die geschlossen werden.
+        if self._session is not None:
+            try:
+                self._session.close()
+            except Exception:  # pragma: no cover - close soll nie werfen
+                log.debug("Fehler beim Schliessen der REST-Session", exc_info=True)
+        # ===== GEAENDERT (gather/session) - ENDE =====
         log.info("Connection to Judo Zewa closed")
         return True
 

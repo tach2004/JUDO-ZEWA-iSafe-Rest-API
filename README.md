@@ -9,8 +9,8 @@ The code was heavily modified, extended and adapted to the JUDO ZEWA/PROM i-Safe
 Home Assistant integration to connect to Judo Zewa/Prom iSafe directly via REST API based on this documentation:
 
 
-https://judo.eu/app/uploads/2024/11/API-KOMMANDOZEILEN.pdf
-Some more basic info can be found here: https://judo.eu/app/downloads/files/de/8203521/manuals/1702574_202405.pdf
+https://judo.eu/ftp-upload/download/REST-API/RESTAPI_Kommandos.pdf
+Some more basic info can be found here: https://judo.eu/app/uploads/2026/02/MANUAL_1702574_202601.pdf
 
 Please have a look here to learn more about the communication module that provides the REST API:
 

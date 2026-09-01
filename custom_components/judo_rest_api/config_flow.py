@@ -6,6 +6,16 @@ from homeassistant import config_entries, exceptions
 import homeassistant.helpers.config_validation as cv
 from .const import CONF, CONST
 
+# Alle Zeitfelder der Konfiguration, jeweils (Feld, Standardwert in Sekunden).
+# Alles in Sekunden, damit die Felder einheitlich zu behandeln sind:
+# 10 Minuten sind also 600.
+INTERVAL_FIELDS = (
+    (CONF.SCAN_INTERVAL, CONST.SCAN_INTERVAL),
+    (CONF.INTERVAL_STATUS, CONST.INTERVAL_STATUS),
+    (CONF.INTERVAL_SETTINGS, CONST.INTERVAL_SETTINGS),
+    (CONF.INTERVAL_DATETIME, CONST.INTERVAL_DATETIME),
+)
+
 
 async def validate_input(data: dict) -> dict[str, Any]:
     """Validate the input."""
@@ -16,6 +26,16 @@ async def validate_input(data: dict) -> dict[str, Any]:
     # `async_step_user` method below.
     if len(data["host"]) < 3:
         raise InvalidHost
+
+    # Alle Zeitangaben muessen ganze Sekunden > 0 sein
+    for field, _default in INTERVAL_FIELDS:
+        if field not in data:
+            continue
+        try:
+            if int(data[field]) < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise InvalidInterval from None
 
     # If your PyPI package is not built with async, pass your methods
     # to the executor:
@@ -65,7 +85,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
                 vol.Optional(schema=CONF.USERNAME, default="admin"): str,
                 vol.Optional(schema=CONF.PASSWORD, default="Connectivity"): str,
                 vol.Optional(schema=CONF.DEVICE_POSTFIX, default=""): str,
-                vol.Optional(schema=CONF.SCAN_INTERVAL, default="60"): str,
+                vol.Optional(schema=CONF.SCAN_INTERVAL, default=CONST.SCAN_INTERVAL): str,
+                vol.Optional(
+                    schema=CONF.INTERVAL_STATUS, default=CONST.INTERVAL_STATUS
+                ): str,
+                vol.Optional(
+                    schema=CONF.INTERVAL_SETTINGS, default=CONST.INTERVAL_SETTINGS
+                ): str,
+                vol.Optional(
+                    schema=CONF.INTERVAL_DATETIME, default=CONST.INTERVAL_DATETIME
+                ): str,
             }
         )
 
@@ -77,6 +106,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
 
                 return self.async_create_entry(title=info["title"], data=user_input)
 
+            except InvalidInterval:
+                errors["base"] = "invalid_interval"
             except Exception:  # noqa: BLE001
                 errors["base"] = "unknown error"
 
@@ -93,6 +124,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
                 CONF.PASSWORD: "password",
                 CONF.DEVICE_POSTFIX: "Device-Postfix",
                 CONF.SCAN_INTERVAL: "scan_interval",
+                CONF.INTERVAL_STATUS: "interval_status",
+                CONF.INTERVAL_SETTINGS: "interval_settings",
+                CONF.INTERVAL_DATETIME: "interval_datetime",
             },
         )
 
@@ -106,9 +140,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
         )
 
         if user_input:
-            return self.async_update_reload_and_abort(
-                entry=reconfigure_entry, data_updates=user_input
-            )
+            try:
+                await validate_input(data={**reconfigure_entry.data, **user_input})
+                return self.async_update_reload_and_abort(
+                    entry=reconfigure_entry, data_updates=user_input
+                )
+            except InvalidInterval:
+                errors["base"] = "invalid_interval"
+            except Exception:  # noqa: BLE001
+                errors["base"] = "unknown error"
 
         schema_reconfigure = vol.Schema(
             schema={
@@ -131,7 +171,29 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
                 ): str,
                 vol.Optional(
                     schema=CONF.SCAN_INTERVAL,
-                    default=reconfigure_entry.data[CONF.SCAN_INTERVAL],
+                    default=reconfigure_entry.data.get(
+                        CONF.SCAN_INTERVAL, CONST.SCAN_INTERVAL
+                    ),
+                ): str,
+                # .get() mit Standardwert: aeltere Konfigurationen kennen diese
+                # drei Felder noch nicht und wuerden sonst einen Fehler werfen.
+                vol.Optional(
+                    schema=CONF.INTERVAL_STATUS,
+                    default=reconfigure_entry.data.get(
+                        CONF.INTERVAL_STATUS, CONST.INTERVAL_STATUS
+                    ),
+                ): str,
+                vol.Optional(
+                    schema=CONF.INTERVAL_SETTINGS,
+                    default=reconfigure_entry.data.get(
+                        CONF.INTERVAL_SETTINGS, CONST.INTERVAL_SETTINGS
+                    ),
+                ): str,
+                vol.Optional(
+                    schema=CONF.INTERVAL_DATETIME,
+                    default=reconfigure_entry.data.get(
+                        CONF.INTERVAL_DATETIME, CONST.INTERVAL_DATETIME
+                    ),
                 ): str,
             }
         )
@@ -147,12 +209,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=CONST.DOMAIN):  # pylint: dis
                 CONF.PASSWORD: "password",
                 CONF.DEVICE_POSTFIX: "Device-Postfix",
                 CONF.SCAN_INTERVAL: "scan_interval",
+                CONF.INTERVAL_STATUS: "interval_status",
+                CONF.INTERVAL_SETTINGS: "interval_settings",
+                CONF.INTERVAL_DATETIME: "interval_datetime",
             },
         )
 
 
 class InvalidHost(exceptions.HomeAssistantError):
     """Error to indicate there is an invalid hostname."""
+
+
+class InvalidInterval(exceptions.HomeAssistantError):
+    """Error to indicate an interval is not a whole number of seconds > 0."""
 
 
 class ConnectionFailed(exceptions.HomeAssistantError):

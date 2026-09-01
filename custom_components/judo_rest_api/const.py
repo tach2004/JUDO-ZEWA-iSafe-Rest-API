@@ -21,6 +21,11 @@ class ConfConstants:
     USERNAME = CONF_USERNAME
     DEVICE_POSTFIX = "Device-Postfix"
     SCAN_INTERVAL = CONF_SCAN_INTERVAL
+    # Eigene Abfrageintervalle, alle Angaben in SEKUNDEN.
+    # Werden beim Einrichten bzw. unter "Neu konfigurieren" gesetzt.
+    INTERVAL_STATUS = "interval_status"      # 6900 Leckageschutz-Status
+    INTERVAL_SETTINGS = "interval_settings"  # 5E00 / 6400 / 6500 / 6800
+    INTERVAL_DATETIME = "interval_datetime"  # 5900 Judo-Uhrzeit
 
 
 CONF = ConfConstants()
@@ -32,6 +37,10 @@ class MainConstants:
 
     DOMAIN = "judo_rest_api"
     SCAN_INTERVAL = "60"  # timedelta(seconds=60))
+    # Standardwerte der Abfrageintervalle in Sekunden
+    INTERVAL_STATUS = "60"     # Leckageschutz-Status moeglichst aktuell
+    INTERVAL_SETTINGS = "600"  # Einstellungen aendern sich selten
+    INTERVAL_DATETIME = "300"  # Uhrzeit nur fuer den Abgleich
     UNIQUE_ID = "unique_id"
     APPID = 100
 
@@ -62,6 +71,9 @@ class FormatConstants:
     DATETIME_JUDO = "datetime_judo"
     SENSOR_INTERNAL = "sensor_internal" ##Only internal Sensor without read and write to the api
     SENSOR_INTERNAL_TIMESTAMP = "sensor_internal_timestamp" #Only internal Sensor as timestamp without read and write to the api
+    STATUS_BIT = "status_bit"              #Ein einzelnes Bit aus einer Bitmaske (params["bit"]) -> binary_sensor
+    STATUS_BITMASK = "status_bitmask"      #Mehrere Bits einer Bitmaske -> ein Zustandstext (resultlist: number = Bitnummer)
+    SELECT_WO_ACTION = "select_wo_action"  #Aktions-Select: sendet und springt danach auf den Standby-Eintrag zurueck
 
 
 FORMATS = FormatConstants()
@@ -79,6 +91,7 @@ class TypeConstants:
     NUMBER_RO = "Number_RO"
     SWITCH = "Switch"
     BUTTON = "Button"
+    BINARY_SENSOR = "Binary_Sensor"
 
 
 TYPES = TypeConstants()

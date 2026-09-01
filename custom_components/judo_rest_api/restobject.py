@@ -132,6 +132,20 @@ class RestAPI:
         # 11s-Wasserfluss-Task immer einen frischen water_total-Wert.
         self._cycle_cache = None
         self._cacheable = frozenset()
+        # Adressen, die in diesem Durchlauf mit HTTP 200 aber LEEREN Nutzdaten
+        # geantwortet haben. Das ist kein Fehler: der JUDO quittiert so, solange
+        # er beschaeftigt ist (Kugelventil faehrt ca. 10 s, Mikroleckagepruefung
+        # laeuft). Der Coordinator wertet das aus und meldet es nur als Debug.
+        self._busy_commands = set()
+        # Adressen, die in diesem Durchlauf ERFOLGREICH gelesen wurden. Nur fuer
+        # diese stellt der Coordinator den Zeitstempel des Intervalls weiter -
+        # ein Fehlversuch wird dadurch im naechsten Durchlauf wiederholt.
+        self._read_ok = set()
+        # Merker, ob seit der letzten Abfrage geschrieben wurde. Der Coordinator
+        # liest daraufhin im naechsten Durchlauf alles neu, damit ein
+        # geschriebener Wert sofort bestaetigt wird und nicht erst nach Ablauf
+        # des Intervalls.
+        self._write_happened = False
         # Eine Sperre pro Adresse: verhindert, dass zwei Items dieselbe
         # Adresse gleichzeitig holen. Ohne sie wuerde der zweite Task noch
         # ins Leere greifen, weil der Erste den Wert erst nach seinem
@@ -148,9 +162,27 @@ class RestAPI:
         if self._cacheable:
             log.debug("Sammelabfrage aktiv fuer: %s", sorted(self._cacheable))
 
+    @property
+    def busy_commands(self) -> set:
+        """Adressen, die in diesem Durchlauf leer quittiert wurden."""
+        return self._busy_commands
+
+    @property
+    def read_ok(self) -> set:
+        """Adressen, die in diesem Durchlauf erfolgreich gelesen wurden."""
+        return self._read_ok
+
+    def pop_write_happened(self) -> bool:
+        """True, wenn seit dem letzten Aufruf geschrieben wurde (und zuruecksetzen)."""
+        happened = self._write_happened
+        self._write_happened = False
+        return happened
+
     def begin_read_cycle(self) -> None:
         """Zwischenspeicher aktivieren (Aufruf am Anfang von fetch_data)."""
         self._cycle_cache = {}
+        self._busy_commands = set()
+        self._read_ok = set()
 
     def end_read_cycle(self) -> None:
         """Zwischenspeicher verwerfen (Aufruf am Ende von fetch_data)."""
@@ -191,8 +223,13 @@ class RestAPI:
                     log.debug("Sammelabfrage: %s aus diesem Durchlauf", command)
                     return cache[command]
                 res = await self._request(command)
-                if res is not None:
-                    cache[command] = res
+                # Auch einen FEHLVERSUCH merken (res is None). Sonst wuerde
+                # jedes weitere Item derselben Adresse einzeln neu anfragen -
+                # bei den 19 Status-Bits auf 6900 waeren das 19 Requests an ein
+                # Geraet, das ohnehin gerade nicht antwortet (z.B. waehrend der
+                # Mikroleckagepruefung). Im naechsten Durchlauf wird wieder
+                # normal gelesen, der Zwischenspeicher gilt nur fuer diesen.
+                cache[command] = res
                 return res
         return await self._request(command)
 
@@ -220,7 +257,17 @@ class RestAPI:
             status = response.status_code
             if status == 200:
                 res = await self._hass.async_add_executor_job(response.json)
-                log.debug("Content %s", str(res["data"]))
+                data = res["data"]
+                log.debug("Content %s", str(data))
+                if not data:
+                    # HTTP 200, aber keine Nutzdaten. Der JUDO antwortet so,
+                    # solange er beschaeftigt ist - waehrend das Kugelventil
+                    # faehrt oder die Mikroleckagepruefung laeuft. Kein Fehler:
+                    # der zuletzt gelesene Wert bleibt einfach stehen.
+                    log.debug("Keine Daten fuer %s - Judo gerade beschaeftigt", command)
+                    self._busy_commands.add(command)
+                    return None
+                self._read_ok.add(command)
                 return res["data"]
             else:
                 log.warning("Content ignored for API return status %s", str(status))
@@ -261,6 +308,7 @@ class RestAPI:
             # dieses Durchlaufs veraltet.
             if self._cycle_cache is not None:
                 self._cycle_cache.clear()
+            self._write_happened = True
             # ===== GEAENDERT (Sammelabfrage) - ENDE =====
             return res["data"]
         except Exception:
@@ -357,6 +405,8 @@ class RestObject:
             return None
         if self._rest_item.format is FORMATS.SELECT_WO:
             return None
+        if self._rest_item.format is FORMATS.SELECT_WO_ACTION:
+            return None
         if self._rest_item.format is FORMATS.SELECT_INTERNAL:
             return None
         if self._rest_item.format is FORMATS.SENSOR_INTERNAL:
@@ -397,6 +447,27 @@ class RestObject:
                 return bytearray.fromhex(big_endian).decode()
             case FORMATS.STATUS:
                 return self._rest_item.get_translation_key_from_number(int(little_endian, 16))
+            case FORMATS.STATUS_BIT:
+                # Ein einzelnes Bit aus der Bitmaske (z.B. Leckageschutz-Status 6900).
+                # Die Bitnummer steht in params["bit"].
+                bitmask = int(little_endian, 16)
+                bit = 0
+                if self._rest_item.params is not None:
+                    bit = self._rest_item.params.get("bit", 0)
+                return bool(bitmask >> bit & 1)
+            case FORMATS.STATUS_BITMASK:
+                # Mehrere zusammengehoerende Bits derselben Maske werden zu EINEM
+                # Zustand zusammengefasst. In der resultlist ist number = Bitnummer,
+                # die Reihenfolge bestimmt die Prioritaet (erstes gesetztes Bit gewinnt).
+                bitmask = int(little_endian, 16)
+                if self._rest_item.resultlist is not None:
+                    for entry in self._rest_item.resultlist:
+                        if bitmask >> entry.number & 1:
+                            return entry.translation_key
+                default_state = "unknown"
+                if self._rest_item.params is not None:
+                    default_state = self._rest_item.params.get("default_state", "unknown")
+                return default_state
             case FORMATS.SELECT:
                 return self._rest_item.get_translation_key_from_number(int(little_endian, 16))
             case FORMATS.DATETIME_JUDO:
@@ -431,6 +502,12 @@ class RestObject:
         if self._rest_api is None:
             return
         if self._rest_item.type == TYPES.SENSOR:
+            return
+        if self._rest_item.type == TYPES.BINARY_SENSOR:
+            return
+        if self._rest_item.format is FORMATS.STATUS_BIT:
+            return
+        if self._rest_item.format is FORMATS.STATUS_BITMASK:
             return
         if self._rest_item.format is FORMATS.BUTTON:
             await self._rest_api.set_rest(self._rest_item.address_write, "")
@@ -472,6 +549,13 @@ class RestObject:
                     self._rest_item.get_number_from_translation_key(value), True
                 )
             case FORMATS.SELECT_WO:
+                towrite = self.format_int_message(
+                    self._rest_item.get_number_from_translation_key(value), True
+                )
+            case FORMATS.SELECT_WO_ACTION:
+                # Aktions-Select (z.B. Lernmodus quittieren, Kommando 6B).
+                # Der Standby-Eintrag wird in entities.py abgefangen und
+                # erreicht diese Stelle nie.
                 towrite = self.format_int_message(
                     self._rest_item.get_number_from_translation_key(value), True
                 )

@@ -16,8 +16,12 @@
 #  "===== GEAENDERT (Sammelabfrage) =====":
 #   3. READ_ONCE_KEYS: unveraenderliche Werte werden nur im ersten Zyklus
 #      gelesen und danach uebersprungen.
-#   4. Mehrfach gelesene Adressen (5E00, 6400) werden pro Durchlauf nur
-#      einmal von der API geholt; die Erkennung passiert automatisch.
+#   4. Mehrfach gelesene Adressen (5E00, 6400, 6800, 6900) werden pro
+#      Durchlauf nur einmal von der API geholt; die Erkennung passiert
+#      automatisch anhand der Item-Liste.
+#   5. Die Abfrageintervalle stehen in der HA-Konfiguration (in Sekunden) und
+#      sind nach API-Adresse aufgeschluesselt, damit Items derselben Adresse
+#      zwangslaeufig dasselbe Intervall haben.
 #
 #  UNVERAENDERT geblieben ist alles Uebrige, insbesondere:
 #   - die komplette Spuelintervall-Logik (_add_months,
@@ -41,6 +45,10 @@ from collections import Counter
 from datetime import timedelta
 from datetime import datetime
 from datetime import time
+# Achtung: die Zeile darueber bindet den Namen "time" an datetime.time.
+# Ein einfaches "import time" waere dadurch wirkungslos - deshalb wird
+# monotonic gezielt importiert.
+from time import monotonic
 from homeassistant.components.persistent_notification import async_create as create_notification
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -48,7 +56,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.event import async_track_time_change
 ##
 from .configentry import MyConfigEntry
-from .const import CONF, FORMATS
+from .const import CONF, CONST, FORMATS
 from .items import RestItem
 from .restobject import RestAPI, RestObject
 ##
@@ -101,29 +109,52 @@ READ_ONCE_KEYS = frozenset({
 # ==                                                                        ==
 # ============================================================================
 
-INTERVALL_ABSENCE_LIMIT  = 10   # 5E00 - Abwesenheits-Grenzwerte (3 Items)
-INTERVALL_LEARNING       = 10   # 6400 - learning_mode_status + learning_water_quantity
-INTERVALL_MICROLEAKAGE   = 10   # 6500 - auto_microleakage_check
-INTERVALL_DATETIME_JUDO  = 5    # 5900 - Judo-Uhrzeit (nur fuer den Zeitabgleich)
+# Welche API-Adresse haengt an welchem Konfigurationsfeld?
+#
+# Die Intervalle werden NICHT mehr hier eingestellt, sondern in Home Assistant:
+#   Einstellungen -> Geraete & Dienste -> Judo -> "Neu konfigurieren"
+# Alle Angaben in SEKUNDEN (10 Minuten sind also 600).
+#
+# Die Zuordnung erfolgt bewusst nach ADRESSE und nicht nach Item-Name: mehrere
+# Items teilen sich eine Adresse (5E00 drei Stueck, 6800 vier, 6900 sogar 19)
+# und muessen zwingend dasselbe Intervall haben - sonst wuerde die
+# Sammelabfrage nicht mehr greifen und dieselbe Adresse mehrfach gelesen.
+#
+# Adressen, die hier NICHT stehen, werden in jedem Durchlauf gelesen, also im
+# Takt des allgemeinen Abfrageintervalls (z.B. 2800 water_total).
+INTERVAL_ADDRESSES = (
+    # (Konfigurationsfeld, Standardwert, betroffene API-Adressen)
+    (CONF.INTERVAL_STATUS, CONST.INTERVAL_STATUS, ("6900",)),
+    (CONF.INTERVAL_SETTINGS, CONST.INTERVAL_SETTINGS, ("5E00", "6400", "6500", "6800")),
+    (CONF.INTERVAL_DATETIME, CONST.INTERVAL_DATETIME, ("5900",)),
+)
 
-# Zuordnung Item -> Intervall. Die drei absence_limit_*-Items teilen sich
-# eine Adresse (5E00) und muessen deshalb dasselbe Intervall haben, damit
-# die Sammelabfrage weiter greift. Gleiches gilt fuer die beiden 6400-Items.
-READ_EVERY_N_CYCLES = {
-    "absence_limit_max_waterflowrate":  INTERVALL_ABSENCE_LIMIT,
-    "absence_limit_max_water_flow":     INTERVALL_ABSENCE_LIMIT,
-    "absence_limit_max_waterflow_time": INTERVALL_ABSENCE_LIMIT,
-    "learning_mode_status":             INTERVALL_LEARNING,
-    "learning_water_quantity":          INTERVALL_LEARNING,
-    "auto_microleakage_check":          INTERVALL_MICROLEAKAGE,
-    "datetime_judo":                    INTERVALL_DATETIME_JUDO,
-}
+
+def _interval_seconds(value, default) -> int:
+    """Eine Intervallangabe aus der Konfiguration in ganze Sekunden umwandeln."""
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = int(default)
+    return max(1, seconds)
 
 # Diese Werte werden einmal beim Start und danach beim ersten Durchlauf
 # nach Tageswechsel (0 Uhr lokale HA-Zeit) gelesen.
 READ_ONCE_PER_DAY_KEYS = frozenset({
     "operating_days",     # 2500 - zaehlt nur einmal taeglich hoch
 })
+
+# Moegliche Ausloeser fuer ein geschlossenes Ventil. Alle zutreffenden Gruende
+# landen in der Meldung; die Reihenfolge bestimmt nur die Reihenfolge im Text.
+VALVE_CLOSED_REASONS = (
+    ("ls_leakage",                 "Leckage erkannt"),
+    ("ls_waterquantity_exceeded",  "Maximale Wassermenge ueberschritten"),
+    ("ls_waterflow_exceeded",      "Maximaler Durchfluss ueberschritten"),
+    ("ls_withdrawaltime_exceeded", "Maximale Entnahmezeit ueberschritten"),
+    ("ls_closed_by_input",         "Schliessung ueber LS-Eingang"),
+    ("ls_closed_manual_u3",        "Manuell geschlossen oder Urlaubsmodus U3"),
+    ("ls_holiday_mode",            "Urlaubsmodus aktiv"),
+)
 
 # ============================================================================
 
@@ -162,11 +193,32 @@ class MyCoordinator(DataUpdateCoordinator):
         # ===== GEAENDERT (Read-Once) - START =====
         # Merkt sich, welche READ_ONCE_KEYS bereits erfolgreich gelesen wurden.
         self._read_once_done = set()
-        # Zaehlt die Durchlaeufe fuer READ_EVERY_N_CYCLES. Startet bei 0,
-        # damit der erste Durchlauf nach dem Start alles liest.
-        self._cycle_counter = 0
+        # Abfrageintervalle in Sekunden, je API-Adresse. Kommen aus der
+        # Konfiguration; .get() mit Standardwert, damit aeltere Konfigurationen
+        # ohne diese Felder weiterhin laufen.
+        self._read_intervals = {}
+        for conf_key, default, addresses in INTERVAL_ADDRESSES:
+            seconds = _interval_seconds(p_config_entry.data.get(conf_key), default)
+            for address in addresses:
+                self._read_intervals[address] = seconds
+        log.debug("Abfrageintervalle in Sekunden: %s", self._read_intervals)
+        # Basisintervall (scan_interval) in Sekunden. Wird gebraucht, um die
+        # Faelligkeit auf den naechstgelegenen Zyklus zu runden - siehe unten.
+        self._base_interval = _interval_seconds(
+            p_config_entry.data.get(CONF.SCAN_INTERVAL), CONST.SCAN_INTERVAL
+        )
+        # Zeitpunkt des letzten erfolgreichen Reads je Adresse (monotonic)
+        self._last_read = {}
+        # In diesem Durchlauf faellige Adressen - wird in fetch_data gefuellt
+        self._due_addresses = set()
         # Merkt sich pro Item das Datum des letzten Reads (READ_ONCE_PER_DAY).
         self._daily_done = {}
+        # Adressen, zu denen in diesem Durchlauf bereits eine Warnung im Log
+        # steht - verhindert 19 identische Meldungen fuer die 6900-Bits.
+        self._warned_addresses = set()
+        # Fuer die Meldung "Leckageschutz geschlossen"
+        self._previous_valve_state = None
+        self._valve_notification_id = "judo_valve_closed"
         # ===== GEAENDERT (Read-Once) - ENDE =====
         # ===== GEAENDERT (Sammelabfrage) - START =====
         # Adressen ermitteln, die von mehreren Items gelesen werden - bei
@@ -209,6 +261,8 @@ class MyCoordinator(DataUpdateCoordinator):
             return None
         if rest_item.format is FORMATS.SELECT_WO:
             return None
+        if rest_item.format is FORMATS.SELECT_WO_ACTION:
+            return None
         if rest_item.format is FORMATS.SELECT_INTERNAL:
             return None
         if rest_item.format is FORMATS.SENSOR_INTERNAL:
@@ -227,7 +281,25 @@ class MyCoordinator(DataUpdateCoordinator):
                 )
                 rest_item.state = val
             else:
-                log.warning("None value for Item %s ignored", rest_item.translation_key)
+                # Mehrere Items teilen sich eine Adresse (6900: 19 Stueck).
+                # Ein einziger fehlgeschlagener Read wuerde sonst 19 gleiche
+                # Warnungen erzeugen - deshalb pro Adresse nur eine je Durchlauf.
+                address = rest_item.address_read
+                if address is not None and address in self._rest_api.busy_commands:
+                    # Der JUDO hat mit HTTP 200, aber leeren Nutzdaten geantwortet.
+                    # Das passiert regulaer, solange er beschaeftigt ist: waehrend
+                    # das Kugelventil faehrt oder die Mikroleckagepruefung laeuft.
+                    # Kein Fehler - der zuletzt gelesene Wert bleibt stehen.
+                    log.debug(
+                        "Kein Wert fuer %s - Judo war gerade beschaeftigt",
+                        rest_item.translation_key,
+                    )
+                elif address is None or address not in self._warned_addresses:
+                    if address is not None:
+                        self._warned_addresses.add(address)
+                    log.warning(
+                        "None value for Item %s ignored", rest_item.translation_key
+                    )
         return rest_item.state
 
     def get_value_from_item(self, translation_key: str) -> int:
@@ -402,9 +474,9 @@ class MyCoordinator(DataUpdateCoordinator):
         if daily and self._daily_done.get(key) == heute:
             return
 
-        # --- Zeitplan: nur in jedem N-ten Durchlauf (READ_EVERY_N_CYCLES) ---
-        jeder_nte = READ_EVERY_N_CYCLES.get(key, 1)
-        if jeder_nte > 1 and (self._cycle_counter % jeder_nte) != 0:
+        # --- Zeitplan: eigenes Abfrageintervall (siehe HA-Konfiguration) ---
+        # Welche Adressen faellig sind, wurde einmalig in fetch_data bestimmt.
+        if item.address_read and item.address_read not in self._due_addresses:
             return
 
         try:
@@ -456,19 +528,63 @@ class MyCoordinator(DataUpdateCoordinator):
         # Judo-Uhrzeit VOR dem Durchlauf merken. Weiter unten laeuft der
         # Zeitabweichungs-Check nur, wenn sich der Wert geaendert hat - also
         # wenn datetime_judo in diesem Durchlauf wirklich frisch gelesen
-        # wurde. Sonst wuerde ein bis zu INTERVALL_DATETIME_JUDO Minuten
-        # alter Wert eine Abweichung vortaeuschen.
+        # wurde. Sonst wuerde ein alter Wert - je nach eingestelltem Intervall
+        # bis zu mehrere Minuten alt - eine Abweichung vortaeuschen.
         judo_time_vorher = self.get_value_from_item("datetime_judo")
         # ===== GEAENDERT (Sammelabfrage) - START =====
         # Zwischenspeicher nur fuer die Dauer dieses Durchlaufs aktivieren.
         # Ausserhalb liest jeder Aufruf wieder frisch von der API - wichtig
         # fuer den 11s-Wasserfluss-Task, der water_total selbst abfragt.
+        self._warned_addresses = set()
+
+        # --- Welche Adressen sind jetzt faellig? ---
+        # Bewusst EINMAL pro Durchlauf entschieden und nicht je Item: mehrere
+        # Items teilen sich eine Adresse. Wuerde man je Item entscheiden, wuerde
+        # der erste Leser den Zeitstempel setzen und alle weiteren Items
+        # derselben Adresse gingen im selben Durchlauf leer aus.
+        jetzt = monotonic()
+        # Nach einem Schreibzugriff einmal alles neu lesen, damit ein
+        # geschriebener Wert sofort vom Geraet bestaetigt wird und nicht bis
+        # zum Ablauf des Intervalls ungeprueft in der Oberflaeche steht.
+        nach_schreibzugriff = self._rest_api.pop_write_happened()
+
+        # Auf den NAECHSTGELEGENEN Zyklus runden statt immer aufzurunden.
+        #
+        # Die Faelligkeit wird nur zu den Zeitpunkten geprueft, an denen ein
+        # Durchlauf startet. Ohne Toleranz muesste der Abstand strikt >= dem
+        # Intervall sein - startet ein Durchlauf auch nur Millisekunden zu
+        # frueh, wird die Adresse uebersprungen und erst im uebernaechsten
+        # Durchlauf gelesen. Bei Intervall = Basisintervall waere das effektiv
+        # die doppelte Zeit. Ein halber Basiszyklus Toleranz laesst die Adresse
+        # in dem Durchlauf laufen, der dem Sollzeitpunkt am naechsten liegt.
+        toleranz = self._base_interval / 2
+        self._due_addresses = set()
+        for item in items:
+            address = item.address_read
+            if not address:
+                continue
+            interval = self._read_intervals.get(address)
+            if interval is None:
+                self._due_addresses.add(address)   # kein eigenes Intervall
+                continue
+            letzter = self._last_read.get(address)
+            if (
+                nach_schreibzugriff
+                or letzter is None
+                or (jetzt - letzter) >= max(0.0, interval - toleranz)
+            ):
+                self._due_addresses.add(address)
+
         self._rest_api.begin_read_cycle()
         try:
             await asyncio.gather(*[self._fetch_item(item) for item in items])
         finally:
+            # Zeitstempel nur fuer Adressen weiterstellen, die auch wirklich
+            # geantwortet haben - ein Fehlversuch wird so gleich wiederholt.
+            for address in self._due_addresses:
+                if address in self._rest_api.read_ok:
+                    self._last_read[address] = jetzt
             self._rest_api.end_read_cycle()
-            self._cycle_counter += 1
         # ===== GEAENDERT (Sammelabfrage) - ENDE =====
         # ===== GEAENDERT (gather/session) - ENDE =====
         #Zeitabweichung prüfen – nur einmalig nach dem Durchlauf
@@ -507,6 +623,83 @@ class MyCoordinator(DataUpdateCoordinator):
         # Installationsdatum einmalig einfrieren, sobald install_date_judo gültig gelesen wurde
         if not self._install_date_frozen:
             await self._try_freeze_install_date_from_judo()
+
+        # Meldung, sobald der Leckageschutz das Ventil geschlossen hat
+        self._check_valve_closed()
+
+    def _check_valve_closed(self) -> None:
+        """Persistente Meldung erzeugen, wenn der Leckageschutz geschlossen hat.
+
+        Reagiert auf den WECHSEL des Ventilzustands. Waehrend der Ventilfahrt
+        liefert der JUDO keine Daten, ls_valve_state behaelt dann seinen letzten
+        Wert - der Wechsel wird also erst erkannt, wenn das Ventil fertig
+        gefahren ist und wieder antwortet. Genau so ist es gewollt.
+        """
+        state = self.get_value_from_item("ls_valve_state")
+        if state is None:
+            return
+
+        vorher = self._previous_valve_state
+        self._previous_valve_state = state
+
+        # Beim ersten Durchlauf nach dem Start nur merken, nicht melden.
+        if vorher is None or state == vorher:
+            return
+
+        if state == "closed":
+            gruende = [
+                text
+                for key, text in VALVE_CLOSED_REASONS
+                if self.get_value_from_item(key)
+            ]
+            if self.get_value_from_item("ls_microleakage_result") == "message_and_close":
+                gruende.append("Kleinleckage erkannt (Meldung und Schliessen)")
+
+            zeitpunkt = dt_util.as_local(dt_util.now()).strftime("%d.%m.%Y %H:%M")
+            msg = (
+                "Der Leckageschutz hat das Ventil geschlossen.\n\n"
+                f"Zeitpunkt: {zeitpunkt}\n"
+            )
+            if gruende:
+                msg += "\nGemeldete Ursache:\n" + "\n".join("- " + g for g in gruende)
+            else:
+                msg += "\nEs wurde keine Ursache mitgemeldet."
+            msg += (
+                "\n\nDie Wasserzufuhr ist unterbrochen. "
+                "Zum Oeffnen den Button 'Leckageschutz oeffnen' benutzen."
+            )
+
+            log.warning(
+                "Judo Leckageschutz geschlossen (%s)",
+                ", ".join(gruende) if gruende else "ohne gemeldete Ursache",
+            )
+            try:
+                self.hass.async_create_task(
+                    self.hass.services.async_call(
+                        "persistent_notification",
+                        "create",
+                        {
+                            "title": "Judo Leckageschutz geschlossen",
+                            "message": msg,
+                            "notification_id": self._valve_notification_id,
+                        },
+                    )
+                )
+            except Exception as e:
+                log.error("Fehler beim Erstellen der Ventil-Meldung: %s", e)
+
+        elif state == "open":
+            # Ventil wieder offen -> alte Meldung entfernen
+            try:
+                self.hass.async_create_task(
+                    self.hass.services.async_call(
+                        "persistent_notification",
+                        "dismiss",
+                        {"notification_id": self._valve_notification_id},
+                    )
+                )
+            except Exception as e:
+                log.error("Fehler beim Entfernen der Ventil-Meldung: %s", e)
 
     ## Installationsdatum setzten
     async def _try_freeze_install_date_from_judo(self) -> None:

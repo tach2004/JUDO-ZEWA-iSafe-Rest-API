@@ -8,12 +8,13 @@ from homeassistant.core import HomeAssistant
 STORAGE_PATH = "/config/judo_storage.json"
 
 # Liste der Entitäten, die gespeichert werden sollen (nur hier anpassen!)
+# HINWEIS: holiday_mode_write und die drei leakageprotection_* wurden hier
+# entfernt. Seit Kommando 6800 ("Leckageeinstellungen lesen") koennen diese
+# Werte direkt vom JUDO zurueckgelesen werden - eine Aenderung am Geraet
+# selbst wird dadurch wieder erkannt. Ein Zwischenspeichern wuerde nur noch
+# einen veralteten Wert liefern, bis der erste Read durch ist.
 PERSISTENT_ENTITIES = [
-    "sleep_mode_duration", 
-    "holiday_mode_write", 
-    "leakageprotection_max_waterflowrate", 
-    "leakageprotection_max_waterflow", 
-    "leakageprotection_max_waterflowtime",
+    "sleep_mode_duration",
     "flush_interval",
     "last_reset_flush_interval",
     "install_date_utc",

@@ -1,11 +1,13 @@
 """Heatpump constants."""
 
 from homeassistant.components.sensor import SensorStateClass, SensorDeviceClass
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.const import (
     UnitOfVolumeFlowRate,
     UnitOfMass,
     UnitOfVolume,
     UnitOfTime,
+    EntityCategory,
 )
 
 from .const import DEVICES, FORMATS, TYPES
@@ -182,6 +184,38 @@ AUTO_MICROLEAKAGECHECK_LIST: list[StatusItem] = [
     StatusItem(number=0, translation_key="no_auto_check"),
     StatusItem(number=1, translation_key="with_message"),
     StatusItem(number=2, translation_key="with_message_close"),
+]
+
+################################################################################
+# Lernmodus quittieren (Kommando 6B, 1 Byte)
+# 0 = ermittelte Grenzwerte verwerfen, 1 = Grenzwerte uebernehmen
+# "standby" ist die Ruhestellung: sie wird NIE an den JUDO gesendet. Nach dem
+# Senden springt der Select automatisch dorthin zurueck, damit dieselbe Aktion
+# beim naechsten Mal wieder ausloest.
+################################################################################
+LEARNING_MODE_ACK_LIST: list[StatusItem] = [
+    StatusItem(number=255, translation_key="standby"),
+    StatusItem(number=1, translation_key="accept_limits"),
+    StatusItem(number=0, translation_key="discard_limits"),
+]
+
+################################################################################
+# Leckageschutz-Status (Kommando 6900, 4 Byte, bitcodiert)
+# Bei diesen beiden Listen ist number = BITNUMMER, nicht der Zahlenwert.
+# Die Reihenfolge bestimmt die Prioritaet: das erste gesetzte Bit gewinnt.
+################################################################################
+VALVE_STATE_LIST: list[StatusItem] = [
+    StatusItem(number=12, translation_key="opening"),   # Oeffnungsvorgang Kugelventil
+    StatusItem(number=13, translation_key="closing"),   # Schliessvorgang Kugelventil
+    StatusItem(number=14, translation_key="open"),      # Ventil offen
+    StatusItem(number=15, translation_key="closed"),    # Ventil geschlossen
+]
+
+MICROLEAKAGE_RESULT_LIST: list[StatusItem] = [
+    StatusItem(number=8, translation_key="message_and_close"),  # Meldung + Schliessen
+    StatusItem(number=9, translation_key="message_only"),       # nur Meldung
+    StatusItem(number=11, translation_key="not_possible"),      # Pruefung nicht moeglich
+    StatusItem(number=10, translation_key="none_detected"),     # keine Kleinleckage erkannt
 ]
 
 FLUSH_INTERVAL_LIST: list[StatusItem] = [
@@ -372,6 +406,31 @@ PARAMS_HOLIDAY_ON: dict = {
 PARAMS_LEARN: dict = {
     "icon":"mdi:school"
 }
+PARAMS_LEARN_ACK: dict = {
+    "icon": "mdi:clipboard-check-outline",
+    "idle_option": "standby",   # Eintrag, auf den nach dem Senden zurueckgesprungen wird
+}
+
+################################################################################
+# Parameter fuer den Leckageschutz-Status (6900).
+# "bit" = Bitnummer in der 32-Bit-Maske, "entity_category" sortiert die
+# Entitaeten in HA unter "Diagnose" ein.
+################################################################################
+def _ls(bit=None, icon=None, deviceclass=None, default_state=None) -> dict:
+    """Kleine Hilfe, damit die 19 Status-Eintraege unten lesbar bleiben."""
+    d: dict = {"entity_category": EntityCategory.DIAGNOSTIC}
+    if bit is not None:
+        d["bit"] = bit
+    if icon is not None:
+        d["icon"] = icon
+    if deviceclass is not None:
+        d["deviceclass"] = deviceclass
+    if default_state is not None:
+        d["default_state"] = default_state
+    return d
+
+_PROBLEM = BinarySensorDeviceClass.PROBLEM
+_RUNNING = BinarySensorDeviceClass.RUNNING
 PARAMS_STATUS: dict = {
     "icon":"mdi:list-status",
     "preciosion": 0
@@ -423,12 +482,20 @@ REST_SYS_ITEMS: list[RestItem] = [
     RestItem( address_read="5E00", read_bytes = 2, read_index=2,  mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOW, resultlist=ABSENCE_LIMIT_MAX_WATERFLOW_LIST, translation_key="absence_limit_max_water_flow"),
     RestItem( address_read="5E00", read_bytes = 2, read_index=4,  mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MINUTES2, resultlist=ABSENCE_LIMIT_MAX_WATERFLOWTIME_LIST, translation_key="absence_limit_max_waterflow_time"),
     RestItem( address_write="5300", write_bytes = 1, write_index=0, mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOURS2, resultlist=SLEEP_MODE_DURATION_LIST, translation_key="sleep_mode_duration"),
-    RestItem( address_write="5600", write_bytes = 1, write_index=0,  mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOLIDAY_ON, resultlist=HOLIDAY_MODE_WRITE_LIST, translation_key="holiday_mode_write"),
+    RestItem( address_read="6800", read_bytes = 1, read_index=0, address_write="5600", write_bytes = 1, write_index=0,  mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOLIDAY_ON, resultlist=HOLIDAY_MODE_WRITE_LIST, translation_key="holiday_mode_write"),
     RestItem( address_read="6500", read_bytes = 1, read_index=0, address_write="5B00", write_bytes = 1, write_index=0,  mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MICROLEAK, resultlist=AUTO_MICROLEAKAGECHECK_LIST, translation_key="auto_microleakage_check"),
 
-    RestItem( mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOWRATE2, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOWRATE_LIST, translation_key="leakageprotection_max_waterflowrate"),
-    RestItem( mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOW, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOW_LIST, translation_key="leakageprotection_max_waterflow"),
-    RestItem( mformat=FORMATS.SELECT_WO, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MINUTES2, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOWTIME_LIST, translation_key="leakageprotection_max_waterflowtime"),
+    # Leckageeinstellungen lesen (Kommando 6800, 7 Byte):
+    #   Byte 0    = Urlaubsmodus          -> holiday_mode_write (oben)
+    #   Byte 1+2  = Max. Volumenstrom l/h -> read_index=1
+    #   Byte 3+4  = Max. Entnahmemenge l  -> read_index=3
+    #   Byte 5+6  = Max. Entnahmedauer min-> read_index=5
+    # Geschrieben wird weiterhin gebuendelt ueber Kommando 5000 in entities.py.
+    RestItem( address_read="6800", read_bytes = 2, read_index=1, mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOWRATE2, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOWRATE_LIST, translation_key="leakageprotection_max_waterflowrate"),
+    RestItem( address_read="6800", read_bytes = 2, read_index=3, mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_FLOW, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOW_LIST, translation_key="leakageprotection_max_waterflow"),
+    RestItem( address_read="6800", read_bytes = 2, read_index=5, mformat=FORMATS.SELECT, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MINUTES2, resultlist=LEAKAGEPROTECTION_MAX_WATERFLOWTIME_LIST, translation_key="leakageprotection_max_waterflowtime"),
+    # Lernmodus quittieren (Kommando 6B, reines Schreib-Kommando)
+    RestItem( address_write="6B00", write_bytes = 1, write_index=0, mformat=FORMATS.SELECT_WO_ACTION, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_LEARN_ACK, resultlist=LEARNING_MODE_ACK_LIST, translation_key="learning_mode_acknowledge"),
 
     RestItem( mformat=FORMATS.SELECT_INTERNAL, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_HOURS2, resultlist=FLUSH_INTERVAL_LIST, translation_key="flush_interval"),
 #Sensor
@@ -463,6 +530,32 @@ REST_SYS_ITEMS: list[RestItem] = [
     
     RestItem(address_write="5A00", write_bytes = 6, write_index=0, mformat=FORMATS.BUTTON_WO_DATETIME, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_DATETIME_BUTTON, translation_key="set_judo_time"),
     RestItem(mformat=FORMATS.BUTTON_INTERNAL, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_RESET, translation_key="reset_flush_interval"),
+
+
+#Leckageschutz-Status (Kommando 6900, 4 Byte bitcodiert)
+#Alle Eintraege teilen sich EINE Adresse - der Coordinator holt sie dank
+#der Sammelabfrage pro Durchlauf trotzdem nur ein einziges Mal.
+#Zwei Sensoren fassen zusammengehoerende Bits zu einem Zustand zusammen:
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BITMASK, mtype=TYPES.SENSOR, device=DEVICES.SYS, resultlist=VALVE_STATE_LIST, params= _ls(icon="mdi:valve", default_state="unknown"), translation_key="ls_valve_state"),
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BITMASK, mtype=TYPES.SENSOR, device=DEVICES.SYS, resultlist=MICROLEAKAGE_RESULT_LIST, params= _ls(icon="mdi:magnify-scan", default_state="no_result"), translation_key="ls_microleakage_result"),
+#Die uebrigen benannten Bits je als eigener binary_sensor:
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=0, icon="mdi:magnify-scan"), translation_key="ls_homing"),  # Bit 0
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=1, icon="mdi:lock"), translation_key="ls_closed_manual_u3"),  # Bit 1
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=2, icon="mdi:home-export-outline"), translation_key="ls_holiday_mode"),  # Bit 2
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=3, deviceclass=_PROBLEM, icon="mdi:cup-water"), translation_key="ls_waterquantity_exceeded"),  # Bit 3
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=4, deviceclass=_PROBLEM, icon="mdi:water-alert"), translation_key="ls_waterflow_exceeded"),  # Bit 4
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=5, deviceclass=_PROBLEM, icon="mdi:timer-alert-outline"), translation_key="ls_withdrawaltime_exceeded"),  # Bit 5
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=6, deviceclass=_PROBLEM, icon="mdi:water-alert-outline"), translation_key="ls_leakage"),  # Bit 6
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=7, icon="mdi:sleep"), translation_key="ls_sleep_mode"),  # Bit 7
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=16, deviceclass=_PROBLEM, icon="mdi:cup-water"), translation_key="ls_learning_waterquantity_exceeded"),  # Bit 16
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=17, deviceclass=_PROBLEM, icon="mdi:water-alert"), translation_key="ls_learning_waterflow_exceeded"),  # Bit 17
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=18, deviceclass=_PROBLEM, icon="mdi:timer-alert-outline"), translation_key="ls_learning_withdrawaltime_exceeded"),  # Bit 18
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=19, deviceclass=_PROBLEM, icon="mdi:water-off-outline"), translation_key="ls_no_waterflow_15days"),  # Bit 19
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=20, icon="mdi:school-outline"), translation_key="ls_learning_mode_finished"),  # Bit 20
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=21, icon="mdi:electric-switch"), translation_key="ls_closed_by_input"),  # Bit 21
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=22, icon="mdi:electric-switch"), translation_key="ls_sleep_mode_by_input"),  # Bit 22
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=24, deviceclass=_RUNNING, icon="mdi:school"), translation_key="ls_learning_mode_active"),  # Bit 24
+    RestItem( address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BIT, mtype=TYPES.BINARY_SENSOR, device=DEVICES.SYS, params= _ls(bit=25, deviceclass=_RUNNING, icon="mdi:cog-sync-outline"), translation_key="ls_special_mode_active"),  # Bit 25
 
 # RestItem(mformat=FORMATS.STATUS, mtype=TYPES.SELECT_NOIF, device=DEVICES.SYS, params= PARAMS_MASS_REFILL, resultlist=SALT_MASS, translation_key="salt_refill_mass"),
 #Switch

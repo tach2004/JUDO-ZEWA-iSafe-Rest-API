@@ -11,6 +11,7 @@ from homeassistant.components.number import NumberEntity
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.components.button import ButtonEntity
 from homeassistant.components.select import SelectEntity
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
@@ -26,6 +27,22 @@ from .restobject import RestAPI, RestObject
 from .storage import save_last_written_value, load_last_written_values, PERSISTENT_ENTITIES
 
 from homeassistant.util import dt as dt_util
+
+# ============================================================================
+# ==   WASSERFLUSS-BERECHNUNG (MyCalcSensorEntity)                          ==
+# ==                                                                        ==
+# ==   water_total hat 1 Liter Aufloesung. Bei 11 s Abtastung springt der   ==
+# ==   Zaehler erst ab rund 5,5 l/min - darunter kann eine Messung          ==
+# ==   unveraendert bleiben, obwohl noch Wasser laeuft.                     ==
+# ==                                                                        ==
+# ==   FLOW_STOP_AFTER_UNCHANGED: so viele unveraenderte Messungen          ==
+# ==       hintereinander gelten als "kein Durchfluss mehr". Bei 3 sind das ==
+# ==       rund 33 s, das erkennt auch einen kleinen Hahn zuverlaessig.     ==
+# ==   FLOW_AVERAGE_SAMPLES: Groesse des Mittelwertfensters. Groesser =     ==
+# ==       ruhigerer Wert, aber traegere Reaktion.                          ==
+# ============================================================================
+FLOW_STOP_AFTER_UNCHANGED = 3
+FLOW_AVERAGE_SAMPLES = 5
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
@@ -89,11 +106,11 @@ class MyEntity(Entity):
         match self._rest_item.format:
             #case FORMATS.STATUS | FORMATS.TEXT | FORMATS.SW_VERSION:
             #case FORMATS.STATUS |FORMATS.SELECT_WO | FORMATS.SELECT | FORMATS.TEXT | FORMATS.TIMESTAMP | FORMATS.SW_VERSION | FORMATS.DATETIME_JUDO | FORMATS.SELECT_INTERNAL | FORMATS.SENSOR_INTERNAL_TIMESTAMP:
-            case FORMATS.STATUS | FORMATS.TEXT | FORMATS.TIMESTAMP | FORMATS.SW_VERSION | FORMATS.DATETIME_JUDO | FORMATS.SENSOR_INTERNAL_TIMESTAMP:
+            case FORMATS.STATUS | FORMATS.TEXT | FORMATS.TIMESTAMP | FORMATS.SW_VERSION | FORMATS.DATETIME_JUDO | FORMATS.SENSOR_INTERNAL_TIMESTAMP | FORMATS.STATUS_BIT | FORMATS.STATUS_BITMASK:
                 self._divider = 1
                 if (
                     self._rest_item.format
-                    in (FORMATS.STATUS, FORMATS.TEXT, FORMATS.TIMESTAMP, FORMATS.SW_VERSION, FORMATS.DATETIME_JUDO, FORMATS.SENSOR_INTERNAL_TIMESTAMP)
+                    in (FORMATS.STATUS, FORMATS.TEXT, FORMATS.TIMESTAMP, FORMATS.SW_VERSION, FORMATS.DATETIME_JUDO, FORMATS.SENSOR_INTERNAL_TIMESTAMP, FORMATS.STATUS_BIT, FORMATS.STATUS_BITMASK)
                     and self._rest_item.params is not None
                 ):
                     self._attr_device_class = self._rest_item.params.get("deviceclass", None)
@@ -127,6 +144,10 @@ class MyEntity(Entity):
             icon = self._rest_item.params.get("icon", None)
             if icon is not None:
                 self._attr_icon = icon
+            # Sortiert die Entitaet in HA unter "Diagnose" ein
+            entity_category = self._rest_item.params.get("entity_category", None)
+            if entity_category is not None:
+                self._attr_entity_category = entity_category
 
     def my_device_info(self) -> DeviceInfo:
         """Build the device info. Anzeige oben links unter Geräteinformationen"""
@@ -449,6 +470,13 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
         for _useless, item in enumerate(self._rest_item.resultlist):
             self.options.append(item.translation_key)
         self._attr_current_option = "FEHLER"
+        # Aktions-Select (z.B. Lernmodus quittieren) startet in der Ruhestellung.
+        if self._rest_item.format is FORMATS.SELECT_WO_ACTION:
+            idle_option = "standby"
+            if self._rest_item.params is not None:
+                idle_option = self._rest_item.params.get("idle_option", "standby")
+            self._attr_current_option = idle_option
+            self._rest_item.state = idle_option
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
@@ -517,38 +545,30 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
             if not self.coordinator._restitems:
                 raise ValueError("coordinator._restitems ist None oder leer. Keine Entitäten zum Verarbeiten.")
 
-            # Lade gespeicherte Werte
-            stored_values = await load_last_written_values(self.hass)
+            # Die Nachbarwerte kommen jetzt direkt aus dem Coordinator-State.
+            # Der wird per Kommando 6800 ("Leckageeinstellungen lesen") vom JUDO
+            # gelesen - storage.py wird dafuer nicht mehr gebraucht. Damit wird
+            # auch eine Aenderung am Geraet selbst korrekt beruecksichtigt.
+            # Gleiche Vorgehensweise wie oben beim absence_limit-Pfad.
             selected_values = {}
 
-            # Sammle alle benötigten Werte
-            for key in ["holiday_mode_write", "leakageprotection_max_waterflowrate", "leakageprotection_max_waterflow", "leakageprotection_max_waterflowtime"]:
-                selected_value = None
-                if key == self._rest_item.translation_key:
-                    # Für die aktuelle Entity nehmen wir den neuen Wert
-                    selected_value = next(
-                        (entry.number for entry in self._rest_item.resultlist if entry.translation_key == option),
-                        None
-                    )
-                    if selected_value is not None:
-                        # Speichere den neuen Wert
-                        await save_last_written_value(self.hass, key, option)
-                        log.debug("Gespeicherter Wert oben: %s", selected_value)
-                else:
-                    # Für die anderen Entities nehmen wir den gespeicherten Wert
-                    stored_option = stored_values.get(key)
-                    if stored_option:
-                        # Finde den numerischen Wert für die gespeicherte Option
-                        for item in self.coordinator._restitems:
-                            if item.translation_key == key:
-                                selected_value = next(
-                                    (entry.number for entry in item.resultlist if entry.translation_key == stored_option),
-                                    None
-                                )
-                                break
+            for item in self.coordinator._restitems:
+                if item.translation_key in ["holiday_mode_write", "leakageprotection_max_waterflowrate", "leakageprotection_max_waterflow", "leakageprotection_max_waterflowtime"]:
+                    if item.translation_key == self._rest_item.translation_key:
+                        # Falls es die aktuelle Entität ist, nehmen wir den neuen Wert (option)
+                        selected_value = next(
+                            (entry.number for entry in item.resultlist if entry.translation_key == option),
+                            None
+                        )
+                    else:
+                        # Für die anderen nehmen wir den aktuell gelesenen Wert aus state
+                        selected_value = next(
+                            (entry.number for entry in item.resultlist if entry.translation_key == item.state),
+                            None
+                        )
 
-                if selected_value is not None:
-                    selected_values[key] = selected_value
+                    if selected_value is not None:
+                        selected_values[item.translation_key] = selected_value
 
             # Debug Ausgabe
             log.debug("Gesammelte Werte für Leakageprotection: %s", selected_values)
@@ -580,6 +600,31 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
                 self.async_write_ha_state()
             except Exception as e:
                 log.error("Fehler beim Senden an Judo: %s", e)
+        #3 Aktions-Select: senden und sofort zurueck in die Ruhestellung
+        elif self._rest_item.format is FORMATS.SELECT_WO_ACTION:
+            idle_option = "standby"
+            if self._rest_item.params is not None:
+                idle_option = self._rest_item.params.get("idle_option", "standby")
+
+            if option != idle_option:
+                try:
+                    ro = RestObject(self._rest_api, self._rest_item)
+                    await ro.setvalue(option)
+                    log.debug(
+                        "Aktion '%s' fuer %s an Judo gesendet",
+                        option,
+                        self._rest_item.translation_key,
+                    )
+                except Exception as e:
+                    log.error("Fehler beim Senden an Judo: %s", e)
+
+            # Immer zurueck in die Ruhestellung - sonst liesse sich dieselbe
+            # Aktion beim naechsten Mal nicht erneut ausloesen, weil HA bei
+            # unveraenderter Auswahl kein Ereignis mehr erzeugt.
+            self._rest_item.state = idle_option
+            self._attr_current_option = idle_option
+            self.async_write_ha_state()
+
         else:
             try: #Speichern der Werte die nur geschrieben werden
                 if self._rest_item.translation_key in PERSISTENT_ENTITIES:
@@ -608,9 +653,19 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        self._attr_current_option = self._rest_item.state
-        self.async_write_ha_state()
-    
+        # Nur uebernehmen, wenn der gelesene Wert auch eine gueltige Option ist.
+        # get_translation_key_from_number liefert bei unbekannten Zahlen
+        # "unbekannt <x>" zurueck - das wuerde HA als ungueltige Option melden.
+        if self._rest_item.state in self.options:
+            self._attr_current_option = self._rest_item.state
+            self.async_write_ha_state()
+        elif self._rest_item.state is not None:
+            log.warning(
+                "Wert '%s' fuer %s ist keine gueltige Auswahl und wird ignoriert",
+                self._rest_item.state,
+                self._rest_item.translation_key,
+            )
+
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info."""
@@ -632,7 +687,9 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
         self._flow_task = None
         self._skip_handle_update_calc = False
         self._initial_poll_skip = False
-        self._flow_history = collections.deque(maxlen=3) #Mittelwertbildung über X Werte
+        self._flow_history = collections.deque(maxlen=FLOW_AVERAGE_SAMPLES) #Mittelwertbildung über X Werte
+        # Zaehlt aufeinanderfolgende Messungen ohne Zaehleraenderung
+        self._unchanged_count = 0
 
     async def _poll_water_total_task(self):
         """Fragt water_total alle 10s ab und berechnet Durchfluss."""
@@ -693,19 +750,38 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
                     self._previous_value = current_value 
                     self._previous_time = current_time  
                     self._initial_poll_skip = False
+                    self._unchanged_count = 0
                     self.async_write_ha_state() 
 
                 elif current_value == self._previous_value:
-                    log.debug("Kein Unterschied mehr bei water_total, stoppe 10s Task")
-                    self._attr_native_value = 0
-                    self._polling_active = False
-                    self._skip_handle_update_calc = False
-                    self._initial_poll_skip = False
-                    self._previous_value = current_value
-                    self._previous_time = current_time
-                    self._flow_history.clear()  # Verlauf Mittelwertbildung zurücksetzen  
-                    self.async_write_ha_state() 
-                    return
+                    # Zaehler steht - das heisst NICHT zwangslaeufig, dass kein
+                    # Wasser mehr laeuft: unter rund 5,5 l/min reicht ein 11s-
+                    # Fenster nicht fuer einen ganzen Liter. Deshalb erst nach
+                    # FLOW_STOP_AFTER_UNCHANGED Messungen abbrechen.
+                    #
+                    # _previous_value und _previous_time bleiben dabei bewusst
+                    # stehen. Springt der Zaehler spaeter doch, wird ueber das
+                    # gesamte Fenster gerechnet (z.B. 1 Liter in 33 s statt in
+                    # 11 s) - das ergibt bei kleinem Durchfluss sogar den
+                    # genaueren Wert.
+                    self._unchanged_count += 1
+                    log.debug(
+                        "10s Task: water_total unveraendert (%d von %d)",
+                        self._unchanged_count,
+                        FLOW_STOP_AFTER_UNCHANGED,
+                    )
+                    if self._unchanged_count >= FLOW_STOP_AFTER_UNCHANGED:
+                        log.debug("Kein Durchfluss mehr, stoppe 10s Task")
+                        self._attr_native_value = 0
+                        self._polling_active = False
+                        self._skip_handle_update_calc = False
+                        self._initial_poll_skip = False
+                        self._unchanged_count = 0
+                        self._previous_value = current_value
+                        self._previous_time = current_time
+                        self._flow_history.clear()  # Verlauf Mittelwertbildung zurücksetzen  
+                        self.async_write_ha_state() 
+                        return
 
                 await asyncio.sleep(11)
 
@@ -714,6 +790,7 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
             self._polling_active = False
             self._skip_handle_update_calc = False
             self._initial_poll_skip = False
+            self._unchanged_count = 0
             self._flow_history.clear()   # Verlauf Mittelwertbildung zurücksetzen 
 
     @callback
@@ -745,6 +822,7 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
                     self._polling_active = True
                     self._skip_handle_update_calc = True
                     self._initial_poll_skip = True
+                    self._unchanged_count = 0
                     self._flow_task = asyncio.create_task(self._poll_water_total_task())
                     log.debug("Änderung erkannt, wechsle zu 10s Polling-Modus")
 
@@ -845,3 +923,40 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
 #        """Return device info."""
 #        return MyEntity.my_device_info(self)
 ##############################################################
+
+
+class MyBinarySensorEntity(CoordinatorEntity, BinarySensorEntity, MyEntity):  # pylint: disable=W0223
+    """Represent a binary sensor entity.
+
+    Wird fuer die Einzelbits des Leckageschutz-Status (Kommando 6900) benutzt.
+    Das restobject loest das Bit aus der 32-Bit-Maske heraus und legt bereits
+    ein bool im RestItem ab - hier muss nur noch durchgereicht werden.
+    """
+
+    def __init__(
+        self,
+        config_entry: MyConfigEntry,
+        rest_item: RestItem,
+        coordinator: MyCoordinator,
+        idx,
+    ) -> None:
+        """Initialize MyBinarySensorEntity."""
+        super().__init__(coordinator, context=idx)
+        self._idx = idx
+        MyEntity.__init__(self, config_entry, rest_item, coordinator.rest_api)
+        if rest_item.state is None:
+            self._attr_is_on = None
+        else:
+            self._attr_is_on = bool(rest_item.state)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        state = self._rest_item.state
+        self._attr_is_on = None if state is None else bool(state)
+        self.async_write_ha_state()
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return MyEntity.my_device_info(self)

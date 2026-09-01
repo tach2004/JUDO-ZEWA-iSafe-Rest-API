@@ -6,7 +6,8 @@
         "error": {
             "cannot_connect": "Verbindung fehlgeschlagen",
             "invalid_auth": "Authentifizierung fehlerhaft",
-            "unknown": "Unerwarteted Fehler"
+            "unknown": "Unerwarteted Fehler",
+            "invalid_interval": "Alle Zeitangaben muessen ganze Sekunden groesser als 0 sein"
         },
         "step": {
             "user": {
@@ -16,7 +17,10 @@
                     "host": "Hostname oder IP Adresse",
                     "port": "HTTP Port",
                     "username": "Benutzername",
-                    "password": "Passwor1"
+                    "password": "Passwort",
+                    "interval_status": "Abfrageintervall Leckageschutz-Status in Sekunden (Standard = 60)",
+                    "interval_settings": "Abfrageintervall Einstellungen & Betriebsstatus in Sekunden (Standard = 600)",
+                    "interval_datetime": "Abfrageintervall Judo-Uhrzeit in Sekunden (Standard = 300)"
                 }
             },
             "reconfigure": {
@@ -26,7 +30,10 @@
                     "host": "Hostname oder IP Adresse",
                     "port": "HTTP Port",
                     "username": "Benutzername",
-                    "password": "Passwor1"
+                    "password": "Passwort",
+                    "interval_status": "Abfrageintervall Leckageschutz-Status in Sekunden (Standard = 60)",
+                    "interval_settings": "Abfrageintervall Einstellungen & Betriebsstatus in Sekunden (Standard = 600)",
+                    "interval_datetime": "Abfrageintervall Judo-Uhrzeit in Sekunden (Standard = 300)"
                 }
             }
         }
@@ -49,7 +56,7 @@
             },
             "salt_warning": {
                 "name": "Salzwarnung"
-            }    
+            }
         },
         "button": {
             "leakage_protection_close": {
@@ -63,7 +70,7 @@
             },
             "sleep_mode_on": {
                 "name": "Sleepmodus starten"
-            },    
+            },
             "sleep_mode_off": {
                 "name": "Sleepmodus beenden"
             },
@@ -83,10 +90,10 @@
                 "name": "Meldungen rücksetzten"
             },
             "set_judo_time": {
-                "name": "Datum & Uhrzeit Judo setzten"  
+                "name": "Datum & Uhrzeit Judo setzten"
             },
             "reset_flush_interval": {
-                "name": "Spülintervall rücksetzten"  
+                "name": "Spülintervall rücksetzten"
             }
         },
         "select": {
@@ -138,7 +145,7 @@
                     "4000_l_h": "4000 l/h",
                     "4500_l_h": "4500 l/h",
                     "5000_l_h": "5000 l/h"
-                }   
+                }
             },
             "absence_limit_max_water_flow": {
                 "name": "Abwesenheit Grenzw. Wassermenge L",
@@ -161,7 +168,7 @@
                     "2000_l": "2000 Liter",
                     "2500_l": "2500 Liter",
                     "3000_l": "3000 Liter"
-                } 
+                }
             },
             "absence_limit_max_waterflow_time": {
                 "name": "Abwesenheit Grenzw. Entnahmemenge min",
@@ -177,7 +184,7 @@
                     "180_min": "180 Minuten",
                     "240_min": "240 Minuten",
                     "300_min": "300 Minuten"
-                }  
+                }
             },
             "leakageprotection_max_waterflowrate": {
                 "name": "Leckageschutz max Durchfluss L/h",
@@ -216,7 +223,7 @@
                     "2000_l": "2000 Liter",
                     "2500_l": "2500 Liter",
                     "3000_l": "3000 Liter"
-                }    
+                }
             },
             "leakageprotection_max_waterflowtime": {
                 "name": "Leckageschutz max Entnahmezeit",
@@ -250,7 +257,15 @@
                     "6m": "6 Monate",
                     "12m": "12 Monate"
                 }
-            } 
+            },
+            "learning_mode_acknowledge": {
+                "name": "Lernmodus quittieren",
+                "state": {
+                    "standby": "Bereit (keine Aktion)",
+                    "accept_limits": "Ermittelte Grenzwerte übernehmen",
+                    "discard_limits": "Ermittelte Grenzwerte verwerfen"
+                }
+            }
         },
         "sensor": {
             "device_number": {
@@ -265,7 +280,6 @@
             "device_type": {
                 "name": "Gerätetyp",
                 "state": {
-
                     "i_soft_safe_plus": "i-soft SAFE+",
                     "i_soft_k_safe_plus": "i-soft K SAFE+",
                     "i_soft_pro": "i-soft PRO",
@@ -329,12 +343,85 @@
             },
             "last_reset_flush_interval": {
                 "name": "Letzte Filter Spülung"
-            }   
+            },
+            "ls_valve_state": {
+                "name": "Ventilzustand",
+                "state": {
+                    "opening": "Öffnet",
+                    "closing": "Schließt",
+                    "open": "Offen",
+                    "closed": "Geschlossen",
+                    "unknown": "Unbekannt"
+                }
+            },
+            "ls_microleakage_result": {
+                "name": "Kleinleckage-Prüfung",
+                "state": {
+                    "message_and_close": "Meldung und Schließen",
+                    "message_only": "Nur Meldung",
+                    "not_possible": "Prüfung nicht möglich",
+                    "none_detected": "Keine Kleinleckage erkannt",
+                    "no_result": "Kein Ergebnis"
+                }
+            }
         },
         "switch": {
             "water_flow_check_on_off": {
                 "name": "Wasserdurchfluss erm. an/aus"
-            }    
+            }
+        },
+        "binary_sensor": {
+            "ls_homing": {
+                "name": "Grundstellungssuche"
+            },
+            "ls_closed_manual_u3": {
+                "name": "Schließung manuell oder U3"
+            },
+            "ls_holiday_mode": {
+                "name": "Urlaubsmodus"
+            },
+            "ls_waterquantity_exceeded": {
+                "name": "Wassermenge überschritten"
+            },
+            "ls_waterflow_exceeded": {
+                "name": "Durchfluss überschritten"
+            },
+            "ls_withdrawaltime_exceeded": {
+                "name": "Entnahmezeit überschritten"
+            },
+            "ls_leakage": {
+                "name": "Leckage"
+            },
+            "ls_sleep_mode": {
+                "name": "Sleepmodus"
+            },
+            "ls_learning_waterquantity_exceeded": {
+                "name": "Lernmodus: Wassermenge überschritten"
+            },
+            "ls_learning_waterflow_exceeded": {
+                "name": "Lernmodus: Durchfluss überschritten"
+            },
+            "ls_learning_withdrawaltime_exceeded": {
+                "name": "Lernmodus: Entnahmezeit überschritten"
+            },
+            "ls_no_waterflow_15days": {
+                "name": "Kein Wasserdurchfluss in 15 Tagen"
+            },
+            "ls_learning_mode_finished": {
+                "name": "Lernmodus beendet"
+            },
+            "ls_closed_by_input": {
+                "name": "Schließung über LS-Eingang"
+            },
+            "ls_sleep_mode_by_input": {
+                "name": "Sleepmodus über LS-Eingang"
+            },
+            "ls_learning_mode_active": {
+                "name": "Lernmodus aktiv"
+            },
+            "ls_special_mode_active": {
+                "name": "Sonderregelungsmodus aktiv"
+            }
         }
     },
     "title": "Judo Zewa iSafe Filt"

@@ -112,6 +112,12 @@ Nothing to do. All settings are read back from the device.
 
 ## 🆕 What this integration reads and controls
 
+> **Firmware note.** The leakage protection status (`6900`), reading the leakage settings (`6800`)
+> and acknowledging the learning mode (`6B00`) are reliably available from **connectivity module
+> firmware 3.52 and device Firmware 1.39 (visible in the integration -> device info)** onwards. From version **2.0.1** the integration detects on its own whether the
+> device supports these commands — on older firmware the affected entities are simply not created,
+> and no errors or repeated warnings occur.
+> 
 ### Leakage protection status (diagnostics)
 
 The 32 bit status word (command `6900`) is decoded into **19 entities**, all filed under

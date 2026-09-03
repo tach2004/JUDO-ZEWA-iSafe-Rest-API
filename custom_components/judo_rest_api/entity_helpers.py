@@ -36,6 +36,20 @@ async def build_entity_list(
     """
 
     for index, item in enumerate(rest_items):
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+        # Kennt die Geraete-Firmware das noetige Kommando nicht, wird die
+        # Entitaet gar nicht erst angelegt - sonst stuende sie dauerhaft auf
+        # "unbekannt". Solange kein Kommando mit HTTP 400 abgelehnt wurde,
+        # ist die Pruefung wirkungslos und es entsteht die gleiche Liste
+        # wie bisher.
+        if not coordinator.is_item_supported(item):
+            log.debug(
+                "%s wird nicht angelegt - Kommando von der Geraete-Firmware "
+                "nicht unterstuetzt",
+                item.translation_key,
+            )
+            continue
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
         if item.type == item_type:
             match item_type:
                 # here the entities are created with the parameters provided

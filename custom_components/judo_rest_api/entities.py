@@ -24,7 +24,7 @@ from .coordinator import MyCoordinator
 from .items import RestItem
 from .restobject import RestAPI, RestObject
 
-from .storage import save_last_written_value, load_last_written_values, PERSISTENT_ENTITIES
+from .storage import save_last_written_value, load_last_written_values, PERSISTENT_ENTITIES, FALLBACK_ENTITIES
 
 from homeassistant.util import dt as dt_util
 
@@ -478,6 +478,20 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
             self._attr_current_option = idle_option
             self._rest_item.state = idle_option
 
+    # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+    def _leakage_fallback_active(self) -> bool:
+        """True, wenn die Geraete-Firmware Kommando 6800 nicht beherrscht.
+
+        Nur dann wird auf die alte Speicherdatei zurueckgegriffen. Auf einem
+        Geraet, das 6800 beantwortet, ist das immer False - der gesamte
+        Rueckfallpfad ist dort also wirkungslos.
+        """
+        try:
+            return "6800" in self.coordinator.rest_api.unsupported_commands
+        except AttributeError:
+            return False
+    # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
+
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
         await super().async_added_to_hass()
@@ -487,7 +501,59 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
             if self._rest_item.translation_key in stored_values:
                 self._attr_current_option = stored_values[self._rest_item.translation_key]
                 self._rest_item.state = stored_values[self._rest_item.translation_key]
-                log.debug("Geladene Werte nach If: %s", stored_values)
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+                # Vorher wurde hier die GESAMTE Speicherdatei ausgegeben. Das
+                # las sich so, als kaemen alle darin enthaltenen Werte aus der
+                # Datei - auch die, die in Wahrheit vom Geraet gelesen wurden.
+                # Jetzt steht nur noch der tatsaechlich wiederhergestellte
+                # Eintrag im Log.
+                log.debug(
+                    "%s aus der Speicherdatei uebernommen: %r",
+                    self._rest_item.translation_key,
+                    stored_values[self._rest_item.translation_key],
+                )
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
+
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+        # Rueckfallebene fuer Geraete ohne Kommando 6800. Drei Bedingungen
+        # muessen zusammenkommen, damit hier ueberhaupt etwas passiert:
+        #   1. der Schluessel gehoert zu den Leckageeinstellungen,
+        #   2. das Geraet hat 6800 mit HTTP 400 abgelehnt,
+        #   3. es liegt kein vom Geraet gelesener Wert vor.
+        # Auf einem Geraet mit aktueller Firmware scheitert es schon an 2. -
+        # der frisch gelesene Wert wird also nie ueberschrieben.
+        if (
+            self._rest_item.translation_key in FALLBACK_ENTITIES
+            and self._rest_item.state is None
+            and self._leakage_fallback_active()
+        ):
+            stored_values = await load_last_written_values(self.hass)
+            stored_option = stored_values.get(self._rest_item.translation_key)
+            # Nur uebernehmen, wenn der gespeicherte Eintrag heute noch eine
+            # gueltige Auswahl ist. Ein Wert aus einer aelteren Version wuerde
+            # sonst als ungueltiger Zustand stehenbleiben und spaeter den
+            # gebuendelten Schreibvorgang scheitern lassen.
+            gueltig = stored_option is not None and any(
+                entry.translation_key == stored_option
+                for entry in (self._rest_item.resultlist or [])
+            )
+            if stored_option is not None and not gueltig:
+                log.warning(
+                    "Gespeicherter Wert %r fuer %s ist keine gueltige Auswahl "
+                    "und wird verworfen",
+                    stored_option,
+                    self._rest_item.translation_key,
+                )
+            if gueltig:
+                self._attr_current_option = stored_option
+                self._rest_item.state = stored_option
+                log.debug(
+                    "%s aus der Speicherdatei wiederhergestellt (Firmware "
+                    "kennt Kommando 6800 nicht): %s",
+                    self._rest_item.translation_key,
+                    stored_option,
+                )
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
 
     async def async_select_option(self, option: str) -> None:
         """Aktualisiert die Auswahl der Entität und synchronisiert sie mit Home Assistant."""
@@ -545,11 +611,23 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
             if not self.coordinator._restitems:
                 raise ValueError("coordinator._restitems ist None oder leer. Keine Entitäten zum Verarbeiten.")
 
-            # Die Nachbarwerte kommen jetzt direkt aus dem Coordinator-State.
-            # Der wird per Kommando 6800 ("Leckageeinstellungen lesen") vom JUDO
-            # gelesen - storage.py wird dafuer nicht mehr gebraucht. Damit wird
-            # auch eine Aenderung am Geraet selbst korrekt beruecksichtigt.
-            # Gleiche Vorgehensweise wie oben beim absence_limit-Pfad.
+            # Die Nachbarwerte kommen direkt aus dem Coordinator-State. Der
+            # wird per Kommando 6800 ("Leckageeinstellungen lesen") vom JUDO
+            # gelesen - damit wird auch eine Aenderung am Geraet selbst korrekt
+            # beruecksichtigt. Gleiche Vorgehensweise wie oben beim
+            # absence_limit-Pfad.
+            #
+            # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+            # Kennt die Firmware 6800 nicht, bleiben alle vier States leer und
+            # der Payload liesse sich nicht bauen - das Schreiben scheiterte
+            # dann mit einem ValueError. Fuer diesen Fall wird wieder die
+            # Speicherdatei herangezogen, genau wie in Version 1.2.1.
+            # Die Datei wird nur dann ueberhaupt gelesen.
+            fallback_aktiv = self._leakage_fallback_active()
+            stored_values = (
+                await load_last_written_values(self.hass) if fallback_aktiv else {}
+            )
+            # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
             selected_values = {}
 
             for item in self.coordinator._restitems:
@@ -566,6 +644,17 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
                             (entry.number for entry in item.resultlist if entry.translation_key == item.state),
                             None
                         )
+                        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+                        # Kein Geraetewert vorhanden und 6800 nicht unterstuetzt:
+                        # zuletzt geschriebenen Wert aus der Datei nehmen.
+                        if selected_value is None and fallback_aktiv:
+                            stored_option = stored_values.get(item.translation_key)
+                            if stored_option is not None:
+                                selected_value = next(
+                                    (entry.number for entry in item.resultlist if entry.translation_key == stored_option),
+                                    None
+                                )
+                        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
 
                     if selected_value is not None:
                         selected_values[item.translation_key] = selected_value
@@ -574,7 +663,16 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
             log.debug("Gesammelte Werte für Leakageprotection: %s", selected_values)
 
             if len(selected_values) != 4:
-                raise ValueError(f"Erwartet 4 Werte, aber {len(selected_values)} erhalten: {selected_values}")
+                # Ohne alle vier Werte laesst sich der gebuendelte Payload nicht
+                # bauen. Bewusst abbrechen statt unvollstaendig zu senden:
+                # Kommando 5000 schreibt Urlaubsmodus, Volumenstrom, Menge und
+                # Dauer gemeinsam - ein geratener Wert wuerde am Geraet echte
+                # Einstellungen ueberschreiben.
+                raise ValueError(
+                    f"Erwartet 4 Werte, aber {len(selected_values)} erhalten: {selected_values}. "
+                    "Bei aelterer Geraete-Firmware ohne Kommando 6800 muss jeder der vier "
+                    "Werte einmal ueber Home Assistant gesetzt worden sein."
+                )
 
             # Werte in der richtigen Reihenfolge in Little-Endian umwandeln
             ordered_keys = ["holiday_mode_write", "leakageprotection_max_waterflowrate", "leakageprotection_max_waterflow", "leakageprotection_max_waterflowtime",]
@@ -589,7 +687,15 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
             log.debug("Sende Leakageprotection Payload an Judo: %s", payload)
             
             try:
-                if self._rest_item.translation_key in PERSISTENT_ENTITIES:
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+                # Zusaetzlich zu PERSISTENT_ENTITIES auch dann speichern, wenn
+                # die Rueckfallebene aktiv ist - nur so steht der Wert beim
+                # naechsten Schreibvorgang als Nachbarwert zur Verfuegung.
+                if self._rest_item.translation_key in PERSISTENT_ENTITIES or (
+                    fallback_aktiv
+                    and self._rest_item.translation_key in FALLBACK_ENTITIES
+                ):
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
                     await save_last_written_value(self.hass, self._rest_item.translation_key, option)
                     logmeldung = (self.hass, self._rest_item.translation_key, option)
                     log.debug("Gespeicherter Wert unten: %s", logmeldung)
@@ -627,7 +733,16 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
 
         else:
             try: #Speichern der Werte die nur geschrieben werden
-                if self._rest_item.translation_key in PERSISTENT_ENTITIES:
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+                # holiday_mode_write laeuft ueber diesen Zweig (Kommando 5600).
+                # Bei fehlendem 6800 muss der Wert gespeichert werden, damit er
+                # nach einem Neustart und beim gebuendelten 5000-Schreibvorgang
+                # wieder zur Verfuegung steht.
+                if self._rest_item.translation_key in PERSISTENT_ENTITIES or (
+                    self._rest_item.translation_key in FALLBACK_ENTITIES
+                    and self._leakage_fallback_active()
+                ):
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
                     await save_last_written_value(self.hass, self._rest_item.translation_key, option)
                     logmeldung = (self.hass, self._rest_item.translation_key, option)
                     log.debug("Gespeicherter Wert unten ohne Sonder: %s", logmeldung)

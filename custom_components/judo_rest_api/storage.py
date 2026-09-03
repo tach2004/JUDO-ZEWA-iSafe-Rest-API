@@ -21,10 +21,35 @@ PERSISTENT_ENTITIES = [
     "water_flow_check_on_off"
     ]
 
+# ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+# Rueckfallebene fuer Geraete mit aelterer Connectivity-Modul-Firmware, die
+# Kommando 6800 ("Leckageeinstellungen lesen") nicht kennen.
+#
+# Unterschied zu PERSISTENT_ENTITIES - und der ist wichtig:
+#   PERSISTENT_ENTITIES  wird IMMER gespeichert und IMMER zurueckgespielt.
+#   FALLBACK_ENTITIES    wird nur benutzt, wenn das Geraet 6800 nicht kann.
+#
+# Wuerden diese vier Schluessel einfach wieder in PERSISTENT_ENTITIES stehen,
+# wuerde der Restore in entities.py den frisch von 6800 gelesenen Geraetewert
+# bei jedem Neustart mit dem gespeicherten ueberschreiben. Eine Aenderung
+# direkt am Geraetepanel waere danach wieder weg. Genau deshalb sind es zwei
+# getrennte Listen; entities.py entscheidet anhand von
+# rest_api.unsupported_commands, welche gilt.
+FALLBACK_ENTITIES = [
+    "holiday_mode_write",
+    "leakageprotection_max_waterflowrate",
+    "leakageprotection_max_waterflow",
+    "leakageprotection_max_waterflowtime",
+    ]
+
+# Alles, was ueberhaupt in die Datei geschrieben werden darf.
+STORED_ENTITIES = PERSISTENT_ENTITIES + FALLBACK_ENTITIES
+# ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
+
 async def save_last_written_value(hass: HomeAssistant, key: str, value: str) -> None:
     """Speichert den letzten geschriebenen Wert in der JSON-Datei."""
-    if key not in PERSISTENT_ENTITIES:
-        return  # Nur speichern, wenn die Entität in der Liste ist
+    if key not in STORED_ENTITIES:
+        return  # Nur speichern, wenn die Entität in einer der Listen steht
 
     data = await load_last_written_values(hass)  # Vorhandene Werte laden
     data[key] = value  # Neuen Wert speichern

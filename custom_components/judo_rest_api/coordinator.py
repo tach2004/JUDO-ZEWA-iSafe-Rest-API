@@ -285,7 +285,21 @@ class MyCoordinator(DataUpdateCoordinator):
                 # Ein einziger fehlgeschlagener Read wuerde sonst 19 gleiche
                 # Warnungen erzeugen - deshalb pro Adresse nur eine je Durchlauf.
                 address = rest_item.address_read
-                if address is not None and address in self._rest_api.busy_commands:
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+                # Kommando von der Firmware nicht unterstuetzt: restobject.py
+                # hat das bereits einmal erklaerend gemeldet. Hier waere eine
+                # zweite Warnung nur Rauschen. Betrifft ausschliesslich den
+                # ersten Durchlauf - danach wird das Item gar nicht mehr
+                # angefasst (siehe _fetch_item).
+                if address is not None and address in self._rest_api.unsupported_commands:
+                    log.debug(
+                        "Kein Wert fuer %s - Kommando %s von der Geraete-Firmware "
+                        "nicht unterstuetzt",
+                        rest_item.translation_key,
+                        address,
+                    )
+                elif address is not None and address in self._rest_api.busy_commands:
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
                     # Der JUDO hat mit HTTP 200, aber leeren Nutzdaten geantwortet.
                     # Das passiert regulaer, solange er beschaeftigt ist: waehrend
                     # das Kugelventil faehrt oder die Mikroleckagepruefung laeuft.
@@ -453,12 +467,48 @@ class MyCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self.async_check_flush_interval_due())
     ##
 
+    # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+    def is_item_supported(self, item: RestItem) -> bool:
+        """False, wenn die Geraete-Firmware das noetige Kommando nicht kennt.
+
+        Grundlage ist ausschliesslich ein HTTP 400 des JUDO (siehe
+        restobject.py). Solange kein Kommando abgelehnt wurde, ist das Set leer
+        und diese Methode gibt fuer jedes Item True zurueck - auf einem Geraet
+        mit aktueller Firmware aendert sich also nichts.
+
+        Geprueft werden zwei Quellen:
+          * address_read   - die Leseadresse des Items selbst (6900, 6800)
+          * params["depends_on"] - fuer reine SCHREIB-Kommandos, die sich nicht
+            abfragen lassen. 6B00 (Lernmodus quittieren) gehoert zur selben
+            Firmware-Generation wie der Leckageschutz-Status und wird deshalb
+            an 6900 gekoppelt. Das ist eine begruendete Annahme, keine Messung.
+        """
+        unsupported = self._rest_api.unsupported_commands
+        if not unsupported:
+            return True
+        depends_on = None
+        if item.params is not None:
+            depends_on = item.params.get("depends_on")
+        for address in (item.address_read, depends_on):
+            if address and address in unsupported:
+                return False
+        return True
+    # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
+
     # ===== GEAENDERT (gather/session) - START =====
     # Neue Hilfsmethode: enthaelt exakt den try/except-Block, der vorher
     # direkt in der for-Schleife von fetch_data() stand. Dadurch kann jedes
     # Item als eigener Task laufen, ohne dass ein Fehler die anderen kippt.
     async def _fetch_item(self, item: RestItem) -> None:
         """Fetch a single item value, logging warnings on failure."""
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+        # Kommando von dieser Firmware nicht unterstuetzt: gar nicht erst
+        # versuchen. Ohne diese Zeilen liefe pro Durchlauf ein vergeblicher
+        # Request samt Warnung - dauerhaft, weil ein Fehlversuch den
+        # Intervall-Zeitstempel bewusst nicht weiterstellt.
+        if not self.is_item_supported(item):
+            return
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
         # ===== GEAENDERT (Read-Once) - START =====
         # Unveraenderliche Werte nach dem ersten erfolgreichen Read
         # ueberspringen. item.state bleibt dabei erhalten.
@@ -562,6 +612,9 @@ class MyCoordinator(DataUpdateCoordinator):
         for item in items:
             address = item.address_read
             if not address:
+                continue
+            # Nicht unterstuetzte Adressen erst gar nicht als faellig fuehren.
+            if address in self._rest_api.unsupported_commands:
                 continue
             interval = self._read_intervals.get(address)
             if interval is None:

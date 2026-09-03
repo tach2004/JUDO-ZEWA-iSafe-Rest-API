@@ -409,6 +409,14 @@ PARAMS_LEARN: dict = {
 PARAMS_LEARN_ACK: dict = {
     "icon": "mdi:clipboard-check-outline",
     "idle_option": "standby",   # Eintrag, auf den nach dem Senden zurueckgesprungen wird
+    # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+    # 6B00 ist ein reines Schreib-Kommando und laesst sich deshalb nicht
+    # abfragen. Ob das Geraet es beherrscht, wird an 6900 gekoppelt: beide
+    # gehoeren zum selben Leckageschutz-Funktionsumfang und kamen mit
+    # derselben Firmware-Generation. Kennt der JUDO 6900 nicht, entfaellt
+    # auch dieser Eintrag. Das ist eine begruendete Annahme, keine Messung.
+    "depends_on": "6900",
+    # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
 }
 
 ################################################################################

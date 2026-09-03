@@ -146,6 +146,18 @@ class RestAPI:
         # geschriebener Wert sofort bestaetigt wird und nicht erst nach Ablauf
         # des Intervalls.
         self._write_happened = False
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+        # Adressen, die der JUDO mit HTTP 400 quittiert hat. 400 = "Bad Request"
+        # heisst hier: dieses Kommando kennt die Firmware nicht. Das ist ein
+        # DAUERHAFTER Zustand - anders als "beschaeftigt" (HTTP 200 mit leeren
+        # Nutzdaten) oder eine Ueberlastung (HTTP 503), die beide gleich im
+        # naechsten Durchlauf erneut versucht werden.
+        #
+        # Bewusst NICHT in begin_read_cycle() zurueckgesetzt: das Set gilt fuer
+        # die gesamte Laufzeit der Integration. Ein Neustart bzw. ein Neuladen
+        # prueft von selbst neu - z.B. nach einem Firmware-Update des JUDO.
+        self._unsupported_commands = set()
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
         # Eine Sperre pro Adresse: verhindert, dass zwei Items dieselbe
         # Adresse gleichzeitig holen. Ohne sie wuerde der zweite Task noch
         # ins Leere greifen, weil der Erste den Wert erst nach seinem
@@ -171,6 +183,13 @@ class RestAPI:
     def read_ok(self) -> set:
         """Adressen, die in diesem Durchlauf erfolgreich gelesen wurden."""
         return self._read_ok
+
+    # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+    @property
+    def unsupported_commands(self) -> set:
+        """Adressen, die diese Geraete-Firmware nicht beherrscht (HTTP 400)."""
+        return self._unsupported_commands
+    # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
 
     def pop_write_happened(self) -> bool:
         """True, wenn seit dem letzten Aufruf geschrieben wurde (und zuruecksetzen)."""
@@ -207,6 +226,13 @@ class RestAPI:
         """get raw response from REST api"""
         if command is None:
             return None
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+        # Einmal als "kennt die Firmware nicht" erkannt - nie wieder anfragen.
+        # Steht bewusst vor dem Zwischenspeicher, damit auch Aufrufe ausserhalb
+        # eines Durchlaufs (z.B. der Wasserfluss-Task) gar nicht erst senden.
+        if command in self._unsupported_commands:
+            return None
+        # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
         # ===== GEAENDERT (Sammelabfrage) - START =====
         # Nur Adressen, die der Coordinator als mehrfach gelesen gemeldet hat,
         # und nur waehrend eines laufenden Durchlaufs.
@@ -270,6 +296,28 @@ class RestAPI:
                 self._read_ok.add(command)
                 return res["data"]
             else:
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+                # HTTP 400 = "Bad Request": der JUDO kennt dieses Kommando
+                # nicht. Bei aelterer Connectivity-Modul-Firmware betrifft das
+                # 6900 (Leckageschutz-Status) und 6800 (Leckageeinstellungen).
+                # Einmal merken, danach nie wieder anfragen - sonst liefe jede
+                # Minute derselbe vergebliche Request samt Warnung.
+                #
+                # Alle anderen Fehlerkennungen (503, 5xx ...) bleiben wie
+                # bisher: sie werden im naechsten Durchlauf erneut versucht.
+                if status == 400:
+                    if command not in self._unsupported_commands:
+                        self._unsupported_commands.add(command)
+                        log.warning(
+                            "Kommando %s wird von dieser Geraete-Firmware nicht "
+                            "unterstuetzt (HTTP 400). Es wird ab jetzt nicht mehr "
+                            "abgefragt; die zugehoerigen Entitaeten entfallen. "
+                            "Nach einem Firmware-Update des JUDO die Integration "
+                            "neu laden.",
+                            command,
+                        )
+                    return None
+                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
                 log.warning("Content ignored for API return status %s", str(status))
                 return None
         except Exception:
@@ -293,6 +341,13 @@ class RestAPI:
             return None     
         try:
             url = self._api_url + command + towrite
+            # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
+            # Schreibzugriffe tauchten im Debug-Log bisher gar nicht auf. Ein
+            # Log war dadurch schwer zu lesen: nach jedem Schreibvorgang liest
+            # der Coordinator absichtlich alles neu, was ohne diese Zeile wie
+            # ein Intervallfehler aussieht.
+            log.debug("Write command %s payload %s", command, towrite)
+            # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
             # ===== GEAENDERT (gather/session) - START =====
             # Session statt requests.get + Begrenzung der Parallelitaet.
             # Das timeout=2 gilt weiterhin nur fuer den HTTP-Request selbst,

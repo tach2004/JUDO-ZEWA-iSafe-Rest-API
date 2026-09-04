@@ -662,6 +662,29 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
             # Debug Ausgabe
             log.debug("Gesammelte Werte für Leakageprotection: %s", selected_values)
 
+            # ===== GEAENDERT (Rueckfallebene erreichbar 2.0.2) - START =====
+            # Den gerade gewaehlten Wert VOR der Vollstaendigkeitspruefung
+            # sichern - genau wie in Version 1.2.1. Nur so laesst sich eine
+            # leere Speicherdatei ueberhaupt befuellen: Kommando 5000 schreibt
+            # alle vier Werte gemeinsam, ein einzelner Wert reicht dafuer nie.
+            # Der Nutzer setzt die vier also nacheinander; die ersten drei
+            # Versuche brechen ab, landen aber in der Datei, und beim vierten
+            # geht der Schreibvorgang durch.
+            #
+            # Greift ausschliesslich bei aktiver Rueckfallebene. Auf einem
+            # Geraet, das 6800 beantwortet, wird hier nichts gespeichert.
+            if fallback_aktiv and self._rest_item.translation_key in FALLBACK_ENTITIES:
+                await save_last_written_value(
+                    self.hass, self._rest_item.translation_key, option
+                )
+                log.debug(
+                    "%s in der Speicherdatei vorgemerkt: %r "
+                    "(Firmware kennt Kommando 6800 nicht)",
+                    self._rest_item.translation_key,
+                    option,
+                )
+            # ===== GEAENDERT (Rueckfallebene erreichbar 2.0.2) - ENDE =====
+
             if len(selected_values) != 4:
                 # Ohne alle vier Werte laesst sich der gebuendelte Payload nicht
                 # bauen. Bewusst abbrechen statt unvollstaendig zu senden:
@@ -687,15 +710,13 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
             log.debug("Sende Leakageprotection Payload an Judo: %s", payload)
             
             try:
-                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
-                # Zusaetzlich zu PERSISTENT_ENTITIES auch dann speichern, wenn
-                # die Rueckfallebene aktiv ist - nur so steht der Wert beim
-                # naechsten Schreibvorgang als Nachbarwert zur Verfuegung.
-                if self._rest_item.translation_key in PERSISTENT_ENTITIES or (
-                    fallback_aktiv
-                    and self._rest_item.translation_key in FALLBACK_ENTITIES
-                ):
-                # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
+                # ===== GEAENDERT (Rueckfallebene erreichbar 2.0.2) - START =====
+                # Der Rueckfall-Fall ist oben bereits gespeichert worden (vor
+                # der Vollstaendigkeitspruefung). Hier bleibt nur noch
+                # PERSISTENT_ENTITIES uebrig - sonst wuerde derselbe Wert ein
+                # zweites Mal in die Datei geschrieben.
+                if self._rest_item.translation_key in PERSISTENT_ENTITIES:
+                # ===== GEAENDERT (Rueckfallebene erreichbar 2.0.2) - ENDE =====
                     await save_last_written_value(self.hass, self._rest_item.translation_key, option)
                     logmeldung = (self.hass, self._rest_item.translation_key, option)
                     log.debug("Gespeicherter Wert unten: %s", logmeldung)

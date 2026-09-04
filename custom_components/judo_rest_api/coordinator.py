@@ -61,7 +61,7 @@ from .items import RestItem
 from .restobject import RestAPI, RestObject
 ##
 from homeassistant.util import dt as dt_util
-from .storage import save_last_written_value, load_last_written_values, PERSISTENT_ENTITIES
+from .storage import save_last_written_value, load_last_written_values, PERSISTENT_ENTITIES, FALLBACK_ENTITIES
 ##
 logging.basicConfig()
 log = logging.getLogger(__name__)
@@ -494,6 +494,36 @@ class MyCoordinator(DataUpdateCoordinator):
                 return False
         return True
     # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
+
+    # ===== GEAENDERT (Rueckfallebene erreichbar 2.0.2) - START =====
+    def should_create_entity(self, item: RestItem) -> bool:
+        """Soll fuer dieses Item eine Entitaet angelegt werden?
+
+        Bewusst NICHT dasselbe wie is_item_supported():
+
+        * is_item_supported() steuert das ABFRAGEN. Ein Kommando, das der JUDO
+          mit HTTP 400 ablehnt, wird nicht mehr angefragt - daran aendert sich
+          nichts.
+        * Diese Methode steuert das ANLEGEN der Entitaet. Die vier Eintraege
+          aus FALLBACK_ENTITIES (Urlaubsmodus und die drei Leckagegrenzwerte)
+          haben einen SCHREIBWEG, der nie von Kommando 6800 abhing: der
+          Urlaubsmodus geht ueber 5600, die drei Grenzwerte gebuendelt ueber
+          5000. In Version 1.2.1 hatten diese Items gar keine Leseadresse und
+          waren deshalb immer bedienbar.
+
+        Ohne diese Ausnahme waeren die vier Entitaeten auf einem Geraet ohne
+        6800 gar nicht vorhanden - und damit auch die Rueckfallebene auf
+        judo_storage.json nicht erreichbar, weil der gebuendelte 5000-Schreib-
+        vorgang nur aus async_select_option dieser Selects heraus aufgerufen
+        werden kann.
+
+        Die 19 Statusbits auf 6900 haben keinen Schreibweg und bleiben deshalb
+        wie bisher unterdrueckt; 6B00 ebenso ueber params["depends_on"].
+        """
+        if self.is_item_supported(item):
+            return True
+        return item.translation_key in FALLBACK_ENTITIES
+    # ===== GEAENDERT (Rueckfallebene erreichbar 2.0.2) - ENDE =====
 
     # ===== GEAENDERT (gather/session) - START =====
     # Neue Hilfsmethode: enthaelt exakt den try/except-Block, der vorher

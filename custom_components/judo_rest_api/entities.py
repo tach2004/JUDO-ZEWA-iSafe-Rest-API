@@ -677,8 +677,22 @@ class MySelectEntity(CoordinatorEntity, SelectEntity, MyEntity):  # pylint: disa
                 await save_last_written_value(
                     self.hass, self._rest_item.translation_key, option
                 )
+                # ===== GEAENDERT (Anzeige beim Anlauf 2.0.3) - START =====
+                # Die Anzeige gleich mitziehen. Bricht der gebuendelte
+                # Schreibvorgang unten mangels vollstaendiger Werte ab, wird
+                # der State weiter unten nie gesetzt - das Auswahlfeld stuende
+                # dann auf "FEHLER", obwohl der Wert laengst vorgemerkt ist.
+                # Beim naechsten Neuladen kaeme er ohnehin aus der Datei
+                # zurueck; hier stimmt die Anzeige nur sofort statt erst dann.
+                #
+                # Betrifft ausschliesslich den einmaligen Anlauf auf einem
+                # Geraet ohne Kommando 6800 (fallback_aktiv).
+                self._rest_item.state = option
+                self._attr_current_option = option
+                self.async_write_ha_state()
+                # ===== GEAENDERT (Anzeige beim Anlauf 2.0.3) - ENDE =====
                 log.debug(
-                    "%s in der Speicherdatei vorgemerkt: %r "
+                    "%s in der Speicherdatei vorgemerkt und angezeigt: %r "
                     "(Firmware kennt Kommando 6800 nicht)",
                     self._rest_item.translation_key,
                     option,

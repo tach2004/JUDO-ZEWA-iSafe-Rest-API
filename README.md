@@ -94,6 +94,14 @@ A few notes:
 
 Nothing to do. All settings are read back from the device.
 
+> **Exception: firmware without command `6800`** (see the firmware note below). There the four
+> leakage settings cannot be read, so they need the one-time initialisation known from 1.2.x:
+> set *Holiday Mode Write* and the three *Leakage Protection* values **once each**, in any order.
+> Command `5000` writes all four together, so the first attempts report
+> *"Erwartet 4 Werte, aber n erhalten"* and are not sent — each one is remembered, and the last
+> one goes through. Run all four; stopping halfway leaves Home Assistant showing values the
+> device has not received. The values are kept in `/config/judo_storage.json`.
+
 > **⬆️ Upgrading from 1.2.x or earlier?**
 >
 > Older versions could not read the leakage protection settings back from the JUDO, so
@@ -105,8 +113,9 @@ Nothing to do. All settings are read back from the device.
 > four values — including the holiday mode — are read straight from the device on every poll.
 > The manual initialisation step is gone.
 >
-> Your existing `/config/judo_storage.json` may still contain the four obsolete keys. They are
-> simply ignored; you can leave the file alone.
+> Your existing `/config/judo_storage.json` may still contain the four keys. On a device that
+> answers `6800` they are simply ignored; you can leave the file alone. On older firmware they are
+> still in use — see *Initial Setup* above.
 
 ---
 

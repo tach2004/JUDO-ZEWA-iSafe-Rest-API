@@ -42,7 +42,7 @@ async def build_entity_list(
         # "unbekannt". Solange kein Kommando mit HTTP 400 abgelehnt wurde,
         # ist die Pruefung wirkungslos und es entsteht die gleiche Liste
         # wie bisher.
-        if not coordinator.is_item_supported(item):
+        if not coordinator.should_create_entity(item):
             log.debug(
                 "%s wird nicht angelegt - Kommando von der Geraete-Firmware "
                 "nicht unterstuetzt",

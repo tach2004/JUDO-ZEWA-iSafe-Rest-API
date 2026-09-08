@@ -126,7 +126,24 @@ Nothing to do. All settings are read back from the device.
 > firmware 3.52 and device Firmware 1.39 (visible in the integration -> device info)** onwards. From version **2.0.1** the integration detects on its own whether the
 > device supports these commands — on older firmware the affected entities are simply not created,
 > and no errors or repeated warnings occur.
-> 
+>
+> Two ways of saying "I don't know that command" are recognised: `HTTP 400`, and — since **2.0.4** —
+> `HTTP 200` with an empty payload, which some connectivity module versions send instead. A device
+> that is merely busy answers the same way, so an empty reply only counts when other commands
+> delivered data at the same time.
+
+> **Support for older firmware.** Everything described here keeps working on older firmware, and
+> the leakage settings fall back to `judo_storage.json` as they did in 1.2.x. Beyond that, this is
+> where support ends: **further problems that only occur on outdated firmware will not be fixed.**
+> Those versions are being phased out by JUDO, and each of them behaves differently enough that
+> chasing them costs more than it helps.
+>
+> Development continues — but from now on it targets **connectivity module 3.52 with device
+> firmware 1.39** and newer. If your device cannot be updated and something here does not work for
+> you, [version 1.2.1](https://github.com/tach2004/JUDO-ZEWA-iSafe-Rest-API/releases/tag/v1.2.1)
+> is the last release written entirely without these commands and remains a perfectly usable
+> choice.
+
 ### Leakage protection status (diagnostics)
 
 The 32 bit status word (command `6900`) is decoded into **19 entities**, all filed under

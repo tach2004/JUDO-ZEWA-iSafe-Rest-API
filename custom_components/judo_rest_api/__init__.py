@@ -46,6 +46,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: MyConfigEntry) -> bool:
     )
     await coordinator.async_config_entry_first_refresh()
 
+    # ===== GEAENDERT (leere Antworten erkennen 2.0.4) - START =====
+    # Direkt nach dem ersten Durchlauf und VOR dem Anlegen der Entitaeten:
+    # Adressen, die leer zurueckkamen, waehrend andere Kommandos Daten
+    # geliefert haben, gezielt noch einmal nachfragen. Manche Firmware
+    # quittiert ein unbekanntes Kommando mit HTTP 200 und leeren Nutzdaten
+    # statt mit HTTP 400. Ohne diese Stelle wuerden die betroffenen
+    # Entitaeten angelegt und blieben dauerhaft ohne Wert.
+    #
+    # Auf einem Geraet, das alles beantwortet, wird hier kein einziger
+    # zusaetzlicher Request gesendet.
+    await restapi.probe_empty_commands()
+    # ===== GEAENDERT (leere Antworten erkennen 2.0.4) - ENDE =====
+
     entry.runtime_data = MyData(
         rest_api=restapi,
         hass=hass,

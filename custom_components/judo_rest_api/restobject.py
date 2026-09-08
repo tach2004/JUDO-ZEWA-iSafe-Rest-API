@@ -74,6 +74,27 @@ MAX_PARALLEL_REQUESTS = 1
 # oben; bei "unbegrenzt" ein Festwert, der ueber der Item-Anzahl liegt, damit
 # urllib3 keine "Connection pool is full"-Warnungen ins Log schreibt.
 _POOL_MAXSIZE = MAX_PARALLEL_REQUESTS if MAX_PARALLEL_REQUESTS else 32
+
+# ===== GEAENDERT (leere Antworten erkennen 2.0.4) - START =====
+# Manche Connectivity-Modul-Versionen quittieren ein unbekanntes Kommando nicht
+# mit HTTP 400, sondern mit HTTP 200 und LEEREN Nutzdaten - also genau so, wie
+# ein beschaeftigtes Geraet antwortet. Unterschieden wird das daran, ob im
+# selben Durchlauf ANDERE Kommandos Daten geliefert haben:
+#
+#   leer, waehrend andere Daten liefern  -> die Firmware kennt das Kommando nicht
+#   leer, waehrend gar nichts durchkommt -> das Geraet ist gerade beschaeftigt
+#
+# Die Auswertung von 407 Abfragezyklen aus echten Geraetelogs stuetzt das: in
+# jedem Durchlauf mit leeren Antworten kam entweder gar nichts durch, oder die
+# betroffene Adresse war zugleich erfolgreich (2800 wird zweimal gelesen).
+#
+# So viele Durchlaeufe in Folge muss eine Adresse leer bleiben, waehrend andere
+# Kommandos antworten, bevor sie als nicht unterstuetzt gilt:
+UNSUPPORTED_EMPTY_STREAK = 3
+# Gezielte Nachfrage beim Start: so oft wird nachgehakt, mit dieser Pause.
+PROBE_ATTEMPTS = 2
+PROBE_PAUSE = 1.0
+# ===== GEAENDERT (leere Antworten erkennen 2.0.4) - ENDE =====
 # ===== GEAENDERT (gather/session) - ENDE =====
 
 
@@ -157,6 +178,9 @@ class RestAPI:
         # die gesamte Laufzeit der Integration. Ein Neustart bzw. ein Neuladen
         # prueft von selbst neu - z.B. nach einem Firmware-Update des JUDO.
         self._unsupported_commands = set()
+        # Zaehler je Adresse: wie oft kam sie in Folge leer zurueck, obwohl das
+        # Geraet im selben Durchlauf andere Kommandos beantwortet hat?
+        self._empty_streak = {}
         # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
         # Eine Sperre pro Adresse: verhindert, dass zwei Items dieselbe
         # Adresse gleichzeitig holen. Ohne sie wuerde der zweite Task noch
@@ -191,6 +215,50 @@ class RestAPI:
         return self._unsupported_commands
     # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
 
+    # ===== GEAENDERT (leere Antworten erkennen 2.0.4) - START =====
+    def _mark_unsupported(self, command: str, grund: str) -> None:
+        """Ein Kommando dauerhaft als nicht unterstuetzt vermerken."""
+        if command in self._unsupported_commands:
+            return
+        self._unsupported_commands.add(command)
+        self._empty_streak.pop(command, None)
+        log.warning(
+            "Kommando %s wird von dieser Geraete-Firmware nicht unterstuetzt "
+            "(%s). Es wird ab jetzt nicht mehr abgefragt; die zugehoerigen "
+            "Entitaeten entfallen. Nach einem Firmware-Update des JUDO die "
+            "Integration neu laden.",
+            command,
+            grund,
+        )
+
+    async def probe_empty_commands(self) -> None:
+        """Nach dem ersten Durchlauf gezielt nachfragen.
+
+        Wird aus __init__.py aufgerufen, BEVOR die Entitaeten angelegt werden -
+        eine Erkennung, die erst nach mehreren Durchlaeufen greift, kaeme dafuer
+        zu spaet.
+
+        Geprueft werden nur Adressen, die leer kamen, waehrend andere Kommandos
+        Daten geliefert haben. War der JUDO im ersten Durchlauf schlicht
+        beschaeftigt, kam gar nichts durch - dann passiert hier nichts, und es
+        wird auch kein einziger zusaetzlicher Request gesendet.
+        """
+        verdaechtig = sorted(c for c in self._busy_commands if c not in self._read_ok)
+        if not verdaechtig or not self._read_ok:
+            return
+        log.debug("Nachfrage fuer leer gebliebene Kommandos: %s", verdaechtig)
+        for command in verdaechtig:
+            for _ in range(PROBE_ATTEMPTS):
+                await asyncio.sleep(PROBE_PAUSE)
+                if await self._request(command):
+                    break
+            else:
+                self._mark_unsupported(
+                    command,
+                    "antwortet auch auf Nachfrage mit HTTP 200 und leeren Nutzdaten",
+                )
+    # ===== GEAENDERT (leere Antworten erkennen 2.0.4) - ENDE =====
+
     def pop_write_happened(self) -> bool:
         """True, wenn seit dem letzten Aufruf geschrieben wurde (und zuruecksetzen)."""
         happened = self._write_happened
@@ -205,6 +273,29 @@ class RestAPI:
 
     def end_read_cycle(self) -> None:
         """Zwischenspeicher verwerfen (Aufruf am Ende von fetch_data)."""
+        # ===== GEAENDERT (leere Antworten erkennen 2.0.4) - START =====
+        # Sicherheitsnetz fuer den Fall, dass die Nachfrage beim Start nicht
+        # gegriffen hat (z.B. weil der JUDO da gerade beschaeftigt war).
+        #
+        # Nur wenn in diesem Durchlauf ueberhaupt etwas durchkam, ist eine leere
+        # Antwort aussagekraeftig. Adressen, die zugleich erfolgreich gelesen
+        # wurden, bleiben aussen vor - 2800 wird pro Durchlauf zweimal geholt
+        # (Zyklus und Wasserfluss-Task) und kann in beiden Mengen stehen.
+        if self._read_ok:
+            for command in self._read_ok:
+                self._empty_streak.pop(command, None)
+            for command in self._busy_commands:
+                if command in self._read_ok:
+                    continue
+                streak = self._empty_streak.get(command, 0) + 1
+                self._empty_streak[command] = streak
+                if streak >= UNSUPPORTED_EMPTY_STREAK:
+                    self._mark_unsupported(
+                        command,
+                        "kam %d Durchlaeufe in Folge leer zurueck, waehrend andere "
+                        "Kommandos beantwortet wurden" % streak,
+                    )
+        # ===== GEAENDERT (leere Antworten erkennen 2.0.4) - ENDE =====
         self._cycle_cache = None
     # ===== GEAENDERT (Sammelabfrage) - ENDE =====
 
@@ -306,16 +397,10 @@ class RestAPI:
                 # Alle anderen Fehlerkennungen (503, 5xx ...) bleiben wie
                 # bisher: sie werden im naechsten Durchlauf erneut versucht.
                 if status == 400:
-                    if command not in self._unsupported_commands:
-                        self._unsupported_commands.add(command)
-                        log.warning(
-                            "Kommando %s wird von dieser Geraete-Firmware nicht "
-                            "unterstuetzt (HTTP 400). Es wird ab jetzt nicht mehr "
-                            "abgefragt; die zugehoerigen Entitaeten entfallen. "
-                            "Nach einem Firmware-Update des JUDO die Integration "
-                            "neu laden.",
-                            command,
-                        )
+                    # Die eindeutigste Antwort: das Geraet lehnt das Kommando
+                    # ausdruecklich ab. Gemeinsame Behandlung mit dem Fall
+                    # "dauerhaft leere Nutzdaten" - siehe _mark_unsupported.
+                    self._mark_unsupported(command, "HTTP 400")
                     return None
                 # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
                 log.warning("Content ignored for API return status %s", str(status))

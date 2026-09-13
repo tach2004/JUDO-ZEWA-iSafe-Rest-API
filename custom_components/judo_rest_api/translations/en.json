@@ -422,6 +422,11 @@
             "ls_special_mode_active": {
                 "name": "Special rule mode active"
             }
+        },
+        "valve": {
+            "leakage_protection_valve": {
+                "name": "Leakage protection valve"
+            }
         }
     },
     "title": "Judo Zewa iSafe Filt"

@@ -495,6 +495,31 @@ class MyCoordinator(DataUpdateCoordinator):
         return True
     # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
 
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+    # Die beiden Ventil-Buttons werden von der Ventil-Entitaet abgeloest -
+    # aber nur, wenn deren Zustandsquelle nachweislich funktioniert.
+    VALVE_BUTTON_KEYS = frozenset({
+        "leakage_protection_close",   # 5100
+        "leakage_protection_open",    # 5200
+    })
+
+    def valve_state_readable(self) -> bool:
+        """True, wenn 6900 seit dem Start schon einmal Daten geliefert hat.
+
+        Bewusst NICHT "6900 steht nicht in unsupported_commands": das waere auch
+        dann wahr, wenn die Erkennung noch gar nicht abgeschlossen ist (etwa
+        weil der JUDO beim Start beschaeftigt war). Die Buttons wuerden dann
+        entfallen, obwohl die Ventil-Entitaet gleich darauf ohne Zustand
+        dasteht - das Geraet waere ohne Bedienmoeglichkeit.
+
+        Mit dieser Fassung gilt:
+          6900 gelesen        -> Ventil-Entitaet, Buttons entfallen
+          6900 nicht moeglich -> Buttons, Ventil-Entitaet entfaellt
+          noch unklar         -> beides, also im Zweifel bedienbar
+        """
+        return "6900" in self._rest_api.ever_read_ok
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
+
     # ===== GEAENDERT (Rueckfallebene erreichbar 2.0.2) - START =====
     def should_create_entity(self, item: RestItem) -> bool:
         """Soll fuer dieses Item eine Entitaet angelegt werden?
@@ -520,6 +545,13 @@ class MyCoordinator(DataUpdateCoordinator):
         Die 19 Statusbits auf 6900 haben keinen Schreibweg und bleiben deshalb
         wie bisher unterdrueckt; 6B00 ebenso ueber params["depends_on"].
         """
+        # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+        # Die beiden Ventil-Buttons entfallen, sobald die Ventil-Entitaet ihren
+        # Zustand wirklich lesen kann. Sie schreiben nach 5100/5200 und haengen
+        # selbst nicht an 6900 - deshalb hier die umgekehrte Bedingung.
+        if item.translation_key in self.VALVE_BUTTON_KEYS:
+            return not self.valve_state_readable()
+        # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
         if self.is_item_supported(item):
             return True
         return item.translation_key in FALLBACK_ENTITIES

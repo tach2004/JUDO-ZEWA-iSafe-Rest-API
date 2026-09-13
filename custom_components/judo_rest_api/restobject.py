@@ -162,6 +162,16 @@ class RestAPI:
         # diese stellt der Coordinator den Zeitstempel des Intervalls weiter -
         # ein Fehlversuch wird dadurch im naechsten Durchlauf wiederholt.
         self._read_ok = set()
+        # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+        # Adressen, die seit dem Start MINDESTENS EINMAL erfolgreich gelesen
+        # wurden. Anders als _read_ok gilt das fuer die gesamte Laufzeit.
+        #
+        # Gebraucht wird das beim Anlegen der Entitaeten: "6900 ist nachweislich
+        # lesbar" ist etwas anderes als "6900 wurde noch nicht als unbrauchbar
+        # erkannt". Nur im ersten Fall darf die Ventil-Entitaet die beiden
+        # Buttons ersetzen - sonst stuende ein Geraet ohne Bedienmoeglichkeit da.
+        self._ever_read_ok = set()
+        # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
         # Merker, ob seit der letzten Abfrage geschrieben wurde. Der Coordinator
         # liest daraufhin im naechsten Durchlauf alles neu, damit ein
         # geschriebener Wert sofort bestaetigt wird und nicht erst nach Ablauf
@@ -202,6 +212,13 @@ class RestAPI:
     def busy_commands(self) -> set:
         """Adressen, die in diesem Durchlauf leer quittiert wurden."""
         return self._busy_commands
+
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+    @property
+    def ever_read_ok(self) -> set:
+        """Adressen, die seit dem Start schon einmal Daten geliefert haben."""
+        return self._ever_read_ok
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
 
     @property
     def read_ok(self) -> set:
@@ -385,6 +402,7 @@ class RestAPI:
                     self._busy_commands.add(command)
                     return None
                 self._read_ok.add(command)
+                self._ever_read_ok.add(command)
                 return res["data"]
             else:
                 # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====

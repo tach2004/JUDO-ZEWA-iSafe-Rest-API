@@ -855,7 +855,13 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
             log.warning("RestItem water_total nicht gefunden")
             return
 
-        ro = RestObject(self._rest_api, rest_item)
+        # ===== GEAENDERT (Nebenabfragen 2.1.0) =====
+        # nebenabfrage=True: dieser Task laeuft in eigenem Takt neben dem
+        # Durchlauf. Seine Antworten duerfen die Erkennung aus 2.0.4 nicht
+        # fuettern - sonst koennte eine Folge leerer Antworten (Ventilfahrt,
+        # Mikroleckagepruefung) 2800 faelschlich als nicht unterstuetzt
+        # abstempeln und den Wasserfluss dauerhaft abschalten.
+        ro = RestObject(self._rest_api, rest_item, nebenabfrage=True)
         #log.warn("10s Task: ro_value: %s", ro)
 
         try:
@@ -947,6 +953,32 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
             self._initial_poll_skip = False
             self._unchanged_count = 0
             self._flow_history.clear()   # Verlauf Mittelwertbildung zurücksetzen 
+
+    # ===== GEAENDERT (Nebenabfragen 2.1.0) - START =====
+    async def async_will_remove_from_hass(self) -> None:
+        """Beim Entladen oder Neuladen keinen Task zuruecklassen.
+
+        "Entladen" heisst: die Integration wird neu geladen, entfernt, neu
+        konfiguriert oder Home Assistant faehrt herunter. async_unload_entry()
+        schliesst dabei ZUERST die HTTP-Sitzung und entfernt danach die
+        Entitaeten.
+
+        Ohne diese Methode lief der 11s-Task weiter, fragte gegen die bereits
+        geschlossene Sitzung ab und schrieb in eine Entitaet, die es nicht mehr
+        gibt. Er beendete sich zwar nach dem ersten Fehlschlag selbst - aber
+        erst nach bis zu elf Sekunden und mit Fehlermeldungen im Protokoll.
+
+        asyncio.CancelledError erbt von BaseException, wird vom "except
+        Exception" im Task also nicht abgefangen - der Abbruch kommt sauber
+        durch.
+        """
+        self._polling_active = False
+        task = self._flow_task
+        self._flow_task = None
+        if task is not None and not task.done():
+            task.cancel()
+        await super().async_will_remove_from_hass()
+    # ===== GEAENDERT (Nebenabfragen 2.1.0) - ENDE =====
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -1134,6 +1166,26 @@ class MyBinarySensorEntity(CoordinatorEntity, BinarySensorEntity, MyEntity):  # 
 # ============================================================================
 VALVE_TRANSITION_TIMEOUT = 30.0
 
+# ============================================================================
+# ==   NACHFASSEN NACH EINER SCHALTUNG                                      ==
+# ==                                                                        ==
+# ==   Ohne Zutun kommt der neue Ventilzustand erst im naechsten regulaeren  ==
+# ==   Durchlauf an - bei 60 s Abfrageintervall also bis zu einer Minute     ==
+# ==   spaeter. Nach einer Schaltung ueber Home Assistant fragt die          ==
+# ==   Ventil-Entitaet deshalb selbst nach, in eigenem Takt und NUR 6900.    ==
+# ==                                                                        ==
+# ==   Das regulaere Intervall laeuft unveraendert weiter; dies kommt nur    ==
+# ==   zusaetzlich dazu. Gleiches Muster wie der Wasserfluss-Task.           ==
+# ==                                                                        ==
+# ==   VALVE_POLL_DELAY: waehrend der Ventilfahrt antwortet der JUDO gar     ==
+# ==   nicht. Wie lange sie dauert, ist nicht dokumentiert - der Wert ist    ==
+# ==   eine Schaetzung und bewusst als Konstante herausgezogen. Faellt die   ==
+# ==   erste Abfrage noch in die Fahrt, kostet das nur einen Versuch.        ==
+# ============================================================================
+VALVE_POLL_DELAY = 12.0      # Wartezeit vor der ersten Nachfrage
+VALVE_POLL_INTERVAL = 10.0   # Takt der weiteren Nachfragen
+VALVE_POLL_TIMEOUT = 60.0    # danach aufgeben und dem Durchlauf ueberlassen
+
 
 class MyValveEntity(CoordinatorEntity, ValveEntity, MyEntity):  # pylint: disable=W0223
     """Leckageschutz-Ventil als HA-Ventil-Entitaet."""
@@ -1157,6 +1209,7 @@ class MyValveEntity(CoordinatorEntity, ValveEntity, MyEntity):  # pylint: disabl
         self._idx = idx
         MyEntity.__init__(self, config_entry, rest_item, coordinator.rest_api)
         self._uebergang_bis = None
+        self._nachfass_task = None
         self._zustand_uebernehmen()
 
     # -- Hilfen --------------------------------------------------------------
@@ -1229,6 +1282,67 @@ class MyValveEntity(CoordinatorEntity, ValveEntity, MyEntity):  # pylint: disabl
             )
             self._uebergang_beenden()
 
+    # -- Nachfassen ----------------------------------------------------------
+    def _nachfassen_starten(self) -> None:
+        """Nach einer Schaltung selbst nach dem neuen Zustand sehen."""
+        self._nachfassen_beenden()
+        self._nachfass_task = asyncio.create_task(self._nachfass_task_lauf())
+
+    def _nachfassen_beenden(self) -> None:
+        """Laufenden Nachfass-Task abbrechen, falls vorhanden."""
+        task = self._nachfass_task
+        self._nachfass_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _nachfass_task_lauf(self) -> None:
+        """Nur 6900 abfragen, bis ein eindeutiger Zustand da ist.
+
+        Laeuft neben dem regulaeren Durchlauf, nicht an dessen Stelle. Die
+        Abfragen sind als Nebenabfrage gekennzeichnet und bleiben damit fuer
+        die Erkennung nicht unterstuetzter Kommandos unsichtbar - waehrend der
+        Ventilfahrt liefert der JUDO leere Antworten, und drei davon in Folge
+        wuerden 6900 sonst abschalten.
+        """
+        try:
+            await asyncio.sleep(VALVE_POLL_DELAY)
+            ende = time.monotonic() + VALVE_POLL_TIMEOUT
+            ro = RestObject(self._rest_api, self._rest_item, nebenabfrage=True)
+            while True:
+                zustand = await ro.value
+                if zustand in ("open", "closed", "opening", "closing"):
+                    self._rest_item.state = zustand
+                    self._zustand_uebernehmen()
+                    self.async_write_ha_state()
+                    log.debug("Ventil: Nachfassen ergab %r", zustand)
+                    if zustand in ("open", "closed"):
+                        # Endlage erreicht - die Meldung ueber ein
+                        # geschlossenes Ventil soll nicht bis zum naechsten
+                        # Durchlauf warten.
+                        try:
+                            self.coordinator.valve_state_updated(zustand)
+                        except Exception as e:  # pylint: disable=broad-except
+                            log.debug("Ventil: Meldungspruefung uebersprungen: %s", e)
+                        return
+                if time.monotonic() >= ende:
+                    log.debug(
+                        "Ventil: Nachfassen nach %.0f s ohne Ergebnis beendet",
+                        VALVE_POLL_TIMEOUT,
+                    )
+                    return
+                await asyncio.sleep(VALVE_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # pylint: disable=broad-except
+            log.error("Fehler beim Nachfassen des Ventilzustands: %s", e)
+        finally:
+            self._nachfass_task = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Beim Entladen oder Neuladen keinen Task zuruecklassen."""
+        self._nachfassen_beenden()
+        await super().async_will_remove_from_hass()
+
     # -- Coordinator ---------------------------------------------------------
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -1265,6 +1379,8 @@ class MyValveEntity(CoordinatorEntity, ValveEntity, MyEntity):  # pylint: disabl
         self._attr_is_closing = not oeffnen
         self._uebergang_bis = time.monotonic() + VALVE_TRANSITION_TIMEOUT
         self.async_write_ha_state()
+        # Nicht bis zum naechsten regulaeren Durchlauf warten.
+        self._nachfassen_starten()
 
     async def async_open_valve(self) -> None:
         """Open the valve."""

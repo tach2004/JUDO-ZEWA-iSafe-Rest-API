@@ -198,6 +198,22 @@ its state, so it is not created there, and the two buttons stay exactly as they 
 cannot be established at start-up at all — for instance because the JUDO was busy the whole time —
 both are created, so the valve can always be operated.
 
+#### The new state does not wait for the next poll
+
+After a command sent from Home Assistant, the valve entity asks for the state itself: it waits a
+moment for the valve to finish travelling, then reads **only** `6900` every ten seconds until a
+definitive state arrives, and gives up after a minute. The configured poll interval keeps running
+untouched — this happens in addition to it, the same way the water flow measurement already works.
+
+Without it the new state would only arrive with the next regular cycle, which at the default
+interval of 60 seconds means up to a minute. The notification raised when the leakage protection
+closes benefits too, since it is driven by the same value.
+
+These extra reads are deliberately excluded from the detection described under *Firmware note*.
+While the valve travels the JUDO answers with empty payloads, and three of those in a row would
+otherwise mark `6900` as unsupported — taking 19 diagnostic entities and the valve entity with it.
+The same exclusion now applies to the water flow measurement, which had the same exposure.
+
 #### Why it shows *opening* / *closing* although the device does not
 
 While the ball valve travels, the JUDO answers every request with an empty payload. Bits 12 and 13

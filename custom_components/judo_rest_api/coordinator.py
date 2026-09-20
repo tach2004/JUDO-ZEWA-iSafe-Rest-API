@@ -742,6 +742,36 @@ class MyCoordinator(DataUpdateCoordinator):
         # Meldung, sobald der Leckageschutz das Ventil geschlossen hat
         self._check_valve_closed()
 
+    # ===== GEAENDERT (Nebenabfragen 2.1.0) - START =====
+    def valve_state_updated(self, zustand: str | None = None) -> None:
+        """Aus einer Nebenabfrage heraus: Ventil-Meldung neu bewerten.
+
+        Wird vom Nachfass-Task der Ventil-Entitaet aufgerufen, nachdem dieser
+        ls_valve_state ausserhalb des Durchlaufs aktualisiert hat. Damit kommt
+        die Meldung ueber ein geschlossenes Ventil rund eine Intervalllaenge
+        frueher.
+
+        Bewusst OHNE async_update_listeners(): dieser Aufruf wuerde auch den
+        Wasserfluss-Sensor wecken, und zwar mit unveraendertem water_total.
+        Dessen Rechnung kaeme dann auf value_diff = 0 und setzte den Durchfluss
+        auf 0, ausserdem verschoebe sie ihren Zeitbezug. Die uebrigen Entitaeten
+        auf 6900 holen den Wert wie bisher im naechsten Durchlauf nach.
+
+        _check_valve_closed() merkt sich den zuletzt gemeldeten Zustand selbst,
+        ein zweiter Aufruf mit demselben Wert bleibt also folgenlos.
+        """
+        # Auf Kommando 6900 liegen ZWEI Eintraege mit derselben Auswertung:
+        # die Ventil-Entitaet und der Sensor ls_valve_state. Der Nachfass-Task
+        # kennt nur seinen eigenen; die Meldungspruefung unten liest aber
+        # ls_valve_state. Ohne diese Zeilen liefe sie auf dem alten Wert.
+        if zustand is not None:
+            for item in self._restitems:
+                if item.translation_key == "ls_valve_state":
+                    item.state = zustand
+                    break
+        self._check_valve_closed()
+    # ===== GEAENDERT (Nebenabfragen 2.1.0) - ENDE =====
+
     def _check_valve_closed(self) -> None:
         """Persistente Meldung erzeugen, wenn der Leckageschutz geschlossen hat.
 

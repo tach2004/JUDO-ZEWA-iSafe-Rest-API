@@ -22,6 +22,7 @@ PLATFORMS: list[str] = [
     "switch",
     "button",
     "binary_sensor",
+    "valve",
 ]
 
 

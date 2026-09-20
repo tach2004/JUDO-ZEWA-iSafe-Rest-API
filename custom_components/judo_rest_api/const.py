@@ -92,6 +92,7 @@ class TypeConstants:
     SWITCH = "Switch"
     BUTTON = "Button"
     BINARY_SENSOR = "Binary_Sensor"
+    VALVE = "Valve"
 
 
 TYPES = TypeConstants()

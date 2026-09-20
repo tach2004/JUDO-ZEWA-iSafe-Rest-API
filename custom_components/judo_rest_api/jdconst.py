@@ -2,6 +2,7 @@
 
 from homeassistant.components.sensor import SensorStateClass, SensorDeviceClass
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.valve import ValveDeviceClass
 from homeassistant.const import (
     UnitOfVolumeFlowRate,
     UnitOfMass,
@@ -385,6 +386,24 @@ PARAMS_CLOSE: dict = {
 PARAMS_OPEN: dict = {
     "icon": "mdi:water-pump"
 }
+# ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+# Das Ventil wird ueber ZWEI Adressen geschaltet, RestItem kennt aber nur ein
+# address_write. Die beiden Kommandos stehen deshalb in den Parametern - wie
+# schon "depends_on" bei 6B00.
+#   5100 = Leckageschutz schliessen
+#   5200 = Leckageschutz oeffnen
+# Gelesen wird der Zustand ganz normal aus der Statusmaske 6900.
+PARAMS_VALVE: dict = {
+    "icon": "mdi:valve",
+    "address_close": "5100",
+    "address_open": "5200",
+    # Muss HIER stehen und nicht als Klassenattribut: MyEntity.__init__ setzt
+    # _attr_device_class fuer STATUS_BITMASK aus genau diesem Parameter und
+    # wuerde ein Klassenattribut mit None ueberschreiben.
+    "deviceclass": ValveDeviceClass.WATER,
+}
+# ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
+
 PARAMS_REG: dict = {
     "icon": "mdi:water-check-outline"
 }
@@ -526,6 +545,14 @@ REST_SYS_ITEMS: list[RestItem] = [
     RestItem( mformat=FORMATS.SENSOR_INTERNAL_TIMESTAMP, mtype=TYPES.SENSOR, device=DEVICES.SYS, params= PARAMS_TIMESTAMP2, translation_key="install_date"),
 
 #Button
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+    # Ventil als eigene HA-Entitaet: liest den Zustand aus 6900 und schaltet
+    # ueber 5100/5200. Die beiden Buttons darunter bleiben erhalten und werden
+    # nur dann angelegt, wenn 6900 NICHT nachweislich lesbar ist - siehe
+    # coordinator.should_create_entity(). Auf altem Geraet aendert sich also
+    # nichts, auf neuem tritt die Ventil-Entitaet an ihre Stelle.
+    RestItem(address_read="6900", read_bytes = 4, read_index=0, mformat=FORMATS.STATUS_BITMASK, mtype=TYPES.VALVE, device=DEVICES.SYS, resultlist=VALVE_STATE_LIST, params= PARAMS_VALVE, translation_key="leakage_protection_valve"),
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
     RestItem(address_write="5100", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_CLOSE, translation_key="leakage_protection_close"),
     RestItem(address_write="5200", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_OPEN, translation_key="leakage_protection_open"),
     RestItem(address_write="5400", write_bytes = 0, write_index=0, mformat=FORMATS.BUTTON, mtype=TYPES.BUTTON, device=DEVICES.SYS, params= PARAMS_SLEEP_ON, translation_key="sleep_mode_on"),

@@ -422,6 +422,11 @@
             "ls_special_mode_active": {
                 "name": "Sonderregelungsmodus aktiv"
             }
+        },
+        "valve": {
+            "leakage_protection_valve": {
+                "name": "Leckageschutz-Ventil"
+            }
         }
     },
     "title": "Judo Zewa iSafe Filt"

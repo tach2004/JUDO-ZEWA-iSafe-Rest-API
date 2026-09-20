@@ -162,6 +162,16 @@ class RestAPI:
         # diese stellt der Coordinator den Zeitstempel des Intervalls weiter -
         # ein Fehlversuch wird dadurch im naechsten Durchlauf wiederholt.
         self._read_ok = set()
+        # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+        # Adressen, die seit dem Start MINDESTENS EINMAL erfolgreich gelesen
+        # wurden. Anders als _read_ok gilt das fuer die gesamte Laufzeit.
+        #
+        # Gebraucht wird das beim Anlegen der Entitaeten: "6900 ist nachweislich
+        # lesbar" ist etwas anderes als "6900 wurde noch nicht als unbrauchbar
+        # erkannt". Nur im ersten Fall darf die Ventil-Entitaet die beiden
+        # Buttons ersetzen - sonst stuende ein Geraet ohne Bedienmoeglichkeit da.
+        self._ever_read_ok = set()
+        # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
         # Merker, ob seit der letzten Abfrage geschrieben wurde. Der Coordinator
         # liest daraufhin im naechsten Durchlauf alles neu, damit ein
         # geschriebener Wert sofort bestaetigt wird und nicht erst nach Ablauf
@@ -202,6 +212,13 @@ class RestAPI:
     def busy_commands(self) -> set:
         """Adressen, die in diesem Durchlauf leer quittiert wurden."""
         return self._busy_commands
+
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+    @property
+    def ever_read_ok(self) -> set:
+        """Adressen, die seit dem Start schon einmal Daten geliefert haben."""
+        return self._ever_read_ok
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
 
     @property
     def read_ok(self) -> set:
@@ -313,8 +330,26 @@ class RestAPI:
         # r = requests.get(self._base_url, auth=(self._username, self._password), timeout=10 )
         # log.warning(r.text)
 
-    async def get_rest(self, command: str):
-        """get raw response from REST api"""
+    async def get_rest(self, command: str, nebenabfrage: bool = False):
+        """get raw response from REST api
+
+        ===== GEAENDERT (Nebenabfragen 2.1.0) =====
+        nebenabfrage=True kennzeichnet Abfragen, die NICHT aus dem geregelten
+        Durchlauf stammen, sondern aus einem eigenen Task: der Wasserfluss-Task
+        (2800 im 11s-Takt) und das Nachfassen der Ventil-Entitaet (6900 nach
+        einer Schaltung).
+
+        Solche Abfragen bleiben fuer die Buchfuehrung UNSICHTBAR. Der Grund ist
+        die Erkennung aus 2.0.4: eine Adresse, die dreimal in Folge leer
+        zurueckkommt, waehrend andere Kommandos antworten, gilt als nicht
+        unterstuetzt. Waehrend das Kugelventil faehrt, liefert der JUDO genau
+        das - leere Antworten. Wuerden die Nebenabfragen mitgezaehlt, koennte
+        6900 faelschlich abgeschaltet werden und mit ihm 19 Diagnose-Entitaeten
+        und die Ventil-Entitaet. Dasselbe gilt umgekehrt: ein erfolgreicher
+        Nebentreffer darf einen Durchlauf nicht als "das Geraet antwortet ja"
+        erscheinen lassen, weil dann die uebrigen leeren Adressen hochgezaehlt
+        wuerden.
+        """
         if command is None:
             return None
         # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
@@ -327,7 +362,9 @@ class RestAPI:
         # ===== GEAENDERT (Sammelabfrage) - START =====
         # Nur Adressen, die der Coordinator als mehrfach gelesen gemeldet hat,
         # und nur waehrend eines laufenden Durchlaufs.
-        cache = self._cycle_cache
+        # Nebenabfragen gehen am Zwischenspeicher des Durchlaufs vorbei: sie
+        # sollen einen frischen Wert holen und den Durchlauf nicht beeinflussen.
+        cache = None if nebenabfrage else self._cycle_cache
         if cache is not None and command in self._cacheable:
             if command in cache:
                 log.debug("Sammelabfrage: %s aus diesem Durchlauf", command)
@@ -348,9 +385,9 @@ class RestAPI:
                 # normal gelesen, der Zwischenspeicher gilt nur fuer diesen.
                 cache[command] = res
                 return res
-        return await self._request(command)
+        return await self._request(command, nebenabfrage=nebenabfrage)
 
-    async def _request(self, command: str):
+    async def _request(self, command: str, nebenabfrage: bool = False):
         """Fuehrt den eigentlichen HTTP-Aufruf aus (frueher Rumpf von get_rest)."""
         # ===== GEAENDERT (Sammelabfrage) - ENDE =====
         response = None
@@ -382,9 +419,12 @@ class RestAPI:
                     # faehrt oder die Mikroleckagepruefung laeuft. Kein Fehler:
                     # der zuletzt gelesene Wert bleibt einfach stehen.
                     log.debug("Keine Daten fuer %s - Judo gerade beschaeftigt", command)
-                    self._busy_commands.add(command)
+                    if not nebenabfrage:
+                        self._busy_commands.add(command)
                     return None
-                self._read_ok.add(command)
+                if not nebenabfrage:
+                    self._read_ok.add(command)
+                    self._ever_read_ok.add(command)
                 return res["data"]
             else:
                 # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - START =====
@@ -396,6 +436,15 @@ class RestAPI:
                 #
                 # Alle anderen Fehlerkennungen (503, 5xx ...) bleiben wie
                 # bisher: sie werden im naechsten Durchlauf erneut versucht.
+                if status == 400 and nebenabfrage:
+                    # Auch die eindeutige Absage nicht aus einer Nebenabfrage
+                    # heraus vermerken - die Buchfuehrung bleibt allein Sache
+                    # des geregelten Durchlaufs.
+                    log.debug(
+                        "Nebenabfrage %s mit HTTP 400 abgelehnt (nicht vermerkt)",
+                        command,
+                    )
+                    return None
                 if status == 400:
                     # Die eindeutigste Antwort: das Geraet lehnt das Kommando
                     # ausdruecklich ab. Gemeinsame Behandlung mit dem Fall
@@ -494,7 +543,12 @@ class RestObject:
     It contains a REST Client for setting and getting REST register values
     """
 
-    def __init__(self, rest_api: RestAPI, rest_item: RestItem) -> None:
+    def __init__(
+        self,
+        rest_api: RestAPI,
+        rest_item: RestItem,
+        nebenabfrage: bool = False,
+    ) -> None:
         """Construct RestObject.
 
         :param rest_api: The REST API
@@ -504,6 +558,8 @@ class RestObject:
         """
         self._rest_item = rest_item
         self._rest_api = rest_api
+        # Siehe get_rest(): Nebenabfragen bleiben fuer die Buchfuehrung unsichtbar.
+        self._nebenabfrage = nebenabfrage
         self._divider = 1
         if self._rest_item.params is not None:
             self._divider = self._rest_item.params.get("divider", 1)
@@ -553,7 +609,9 @@ class RestObject:
             return None
         if self._rest_item.format is FORMATS.SENSOR_INTERNAL_TIMESTAMP:
             return None
-        res = await self._rest_api.get_rest(self._rest_item.address_read)
+        res = await self._rest_api.get_rest(
+            self._rest_item.address_read, nebenabfrage=self._nebenabfrage
+        )
 
         if res is None:
             return None

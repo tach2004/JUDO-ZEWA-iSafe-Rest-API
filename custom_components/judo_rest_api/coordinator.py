@@ -495,6 +495,31 @@ class MyCoordinator(DataUpdateCoordinator):
         return True
     # ===== GEAENDERT (Firmware-Erkennung 2.0.1) - ENDE =====
 
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+    # Die beiden Ventil-Buttons werden von der Ventil-Entitaet abgeloest -
+    # aber nur, wenn deren Zustandsquelle nachweislich funktioniert.
+    VALVE_BUTTON_KEYS = frozenset({
+        "leakage_protection_close",   # 5100
+        "leakage_protection_open",    # 5200
+    })
+
+    def valve_state_readable(self) -> bool:
+        """True, wenn 6900 seit dem Start schon einmal Daten geliefert hat.
+
+        Bewusst NICHT "6900 steht nicht in unsupported_commands": das waere auch
+        dann wahr, wenn die Erkennung noch gar nicht abgeschlossen ist (etwa
+        weil der JUDO beim Start beschaeftigt war). Die Buttons wuerden dann
+        entfallen, obwohl die Ventil-Entitaet gleich darauf ohne Zustand
+        dasteht - das Geraet waere ohne Bedienmoeglichkeit.
+
+        Mit dieser Fassung gilt:
+          6900 gelesen        -> Ventil-Entitaet, Buttons entfallen
+          6900 nicht moeglich -> Buttons, Ventil-Entitaet entfaellt
+          noch unklar         -> beides, also im Zweifel bedienbar
+        """
+        return "6900" in self._rest_api.ever_read_ok
+    # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
+
     # ===== GEAENDERT (Rueckfallebene erreichbar 2.0.2) - START =====
     def should_create_entity(self, item: RestItem) -> bool:
         """Soll fuer dieses Item eine Entitaet angelegt werden?
@@ -520,6 +545,13 @@ class MyCoordinator(DataUpdateCoordinator):
         Die 19 Statusbits auf 6900 haben keinen Schreibweg und bleiben deshalb
         wie bisher unterdrueckt; 6B00 ebenso ueber params["depends_on"].
         """
+        # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - START =====
+        # Die beiden Ventil-Buttons entfallen, sobald die Ventil-Entitaet ihren
+        # Zustand wirklich lesen kann. Sie schreiben nach 5100/5200 und haengen
+        # selbst nicht an 6900 - deshalb hier die umgekehrte Bedingung.
+        if item.translation_key in self.VALVE_BUTTON_KEYS:
+            return not self.valve_state_readable()
+        # ===== GEAENDERT (Ventil-Entitaet 2.1.0) - ENDE =====
         if self.is_item_supported(item):
             return True
         return item.translation_key in FALLBACK_ENTITIES
@@ -709,6 +741,36 @@ class MyCoordinator(DataUpdateCoordinator):
 
         # Meldung, sobald der Leckageschutz das Ventil geschlossen hat
         self._check_valve_closed()
+
+    # ===== GEAENDERT (Nebenabfragen 2.1.0) - START =====
+    def valve_state_updated(self, zustand: str | None = None) -> None:
+        """Aus einer Nebenabfrage heraus: Ventil-Meldung neu bewerten.
+
+        Wird vom Nachfass-Task der Ventil-Entitaet aufgerufen, nachdem dieser
+        ls_valve_state ausserhalb des Durchlaufs aktualisiert hat. Damit kommt
+        die Meldung ueber ein geschlossenes Ventil rund eine Intervalllaenge
+        frueher.
+
+        Bewusst OHNE async_update_listeners(): dieser Aufruf wuerde auch den
+        Wasserfluss-Sensor wecken, und zwar mit unveraendertem water_total.
+        Dessen Rechnung kaeme dann auf value_diff = 0 und setzte den Durchfluss
+        auf 0, ausserdem verschoebe sie ihren Zeitbezug. Die uebrigen Entitaeten
+        auf 6900 holen den Wert wie bisher im naechsten Durchlauf nach.
+
+        _check_valve_closed() merkt sich den zuletzt gemeldeten Zustand selbst,
+        ein zweiter Aufruf mit demselben Wert bleibt also folgenlos.
+        """
+        # Auf Kommando 6900 liegen ZWEI Eintraege mit derselben Auswertung:
+        # die Ventil-Entitaet und der Sensor ls_valve_state. Der Nachfass-Task
+        # kennt nur seinen eigenen; die Meldungspruefung unten liest aber
+        # ls_valve_state. Ohne diese Zeilen liefe sie auf dem alten Wert.
+        if zustand is not None:
+            for item in self._restitems:
+                if item.translation_key == "ls_valve_state":
+                    item.state = zustand
+                    break
+        self._check_valve_closed()
+    # ===== GEAENDERT (Nebenabfragen 2.1.0) - ENDE =====
 
     def _check_valve_closed(self) -> None:
         """Persistente Meldung erzeugen, wenn der Leckageschutz geschlossen hat.

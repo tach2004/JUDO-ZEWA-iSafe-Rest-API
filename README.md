@@ -164,6 +164,68 @@ The 32 bit status word (command `6900`) is decoded into **19 entities**, all fil
 The microleakage result is **latched** by the device: it keeps reporting the outcome of the
 last check until a new check produces a different result.
 
+### The valve as a proper valve entity
+
+Since **2.1.0** the leakage protection is also exposed as a Home Assistant
+[valve entity](https://www.home-assistant.io/integrations/valve) — `device_class: water`,
+supporting *open* and *close*. It reads its state from `6900` and switches via `5100` / `5200`,
+so it replaces what used to take a sensor plus two buttons:
+
+| | |
+|---|---|
+| Services | `valve.open_valve`, `valve.close_valve`, `valve.toggle` |
+| States | `open`, `closed`, `opening`, `closing` |
+| Position | not reported — the JUDO only knows fully open and fully closed |
+
+**The two buttons *Close leakage protection* and *Open leakage protection* are no longer created**
+on a device whose valve state can be read. If you use them in automations or scripts, switch to
+the valve entity:
+
+```yaml
+# before
+- service: button.press
+  target: {entity_id: button.judo_leckageschutz_schliessen}
+# now
+- service: valve.close_valve
+  target: {entity_id: valve.judo_leckageschutz_ventil}
+```
+
+The *Valve state* sensor (`ls_valve_state`) and the notification raised when the leakage
+protection closes are unchanged — automations built on those keep working.
+
+**On firmware that cannot serve `6900`, nothing changes**: the valve entity needs that command for
+its state, so it is not created there, and the two buttons stay exactly as they were. If the state
+cannot be established at start-up at all — for instance because the JUDO was busy the whole time —
+both are created, so the valve can always be operated.
+
+#### The new state does not wait for the next poll
+
+After a command sent from Home Assistant, the valve entity asks for the state itself: it waits a
+moment for the valve to finish travelling, then reads **only** `6900` every ten seconds until a
+definitive state arrives, and gives up after a minute. The configured poll interval keeps running
+untouched — this happens in addition to it, the same way the water flow measurement already works.
+
+Without it the new state would only arrive with the next regular cycle, which at the default
+interval of 60 seconds means up to a minute. The notification raised when the leakage protection
+closes benefits too, since it is driven by the same value.
+
+These extra reads are deliberately excluded from the detection described under *Firmware note*.
+While the valve travels the JUDO answers with empty payloads, and three of those in a row would
+otherwise mark `6900` as unsupported — taking 19 diagnostic entities and the valve entity with it.
+The same exclusion now applies to the water flow measurement, which had the same exposure.
+
+#### Why it shows *opening* / *closing* although the device does not
+
+While the ball valve travels, the JUDO answers every request with an empty payload. Bits 12 and 13
+of the status word do mean *opening* and *closing*, but they are never readable in practice — over
+340 readings from real device logs, not once. Until now the display therefore kept showing the old
+state for roughly ten seconds after a command.
+
+The valve entity sets the transition itself when it sends the command and clears it as soon as a
+matching end position arrives, at the latest after 30 seconds. A stale end position from before the
+command is deliberately ignored while a transition is running, and a command the device did not
+accept leaves the display untouched.
+
 ### Acknowledge learning mode
 
 A single select entity (command `6B`) with three options:

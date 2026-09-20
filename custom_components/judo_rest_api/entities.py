@@ -12,6 +12,11 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.components.button import ButtonEntity
 from homeassistant.components.select import SelectEntity
 from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.valve import (
+    ValveEntity,
+    ValveEntityFeature,
+    ValveDeviceClass,
+)
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
@@ -850,7 +855,13 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
             log.warning("RestItem water_total nicht gefunden")
             return
 
-        ro = RestObject(self._rest_api, rest_item)
+        # ===== GEAENDERT (Nebenabfragen 2.1.0) =====
+        # nebenabfrage=True: dieser Task laeuft in eigenem Takt neben dem
+        # Durchlauf. Seine Antworten duerfen die Erkennung aus 2.0.4 nicht
+        # fuettern - sonst koennte eine Folge leerer Antworten (Ventilfahrt,
+        # Mikroleckagepruefung) 2800 faelschlich als nicht unterstuetzt
+        # abstempeln und den Wasserfluss dauerhaft abschalten.
+        ro = RestObject(self._rest_api, rest_item, nebenabfrage=True)
         #log.warn("10s Task: ro_value: %s", ro)
 
         try:
@@ -942,6 +953,32 @@ class MyCalcSensorEntity(CoordinatorEntity, SensorEntity, MyEntity):
             self._initial_poll_skip = False
             self._unchanged_count = 0
             self._flow_history.clear()   # Verlauf Mittelwertbildung zurücksetzen 
+
+    # ===== GEAENDERT (Nebenabfragen 2.1.0) - START =====
+    async def async_will_remove_from_hass(self) -> None:
+        """Beim Entladen oder Neuladen keinen Task zuruecklassen.
+
+        "Entladen" heisst: die Integration wird neu geladen, entfernt, neu
+        konfiguriert oder Home Assistant faehrt herunter. async_unload_entry()
+        schliesst dabei ZUERST die HTTP-Sitzung und entfernt danach die
+        Entitaeten.
+
+        Ohne diese Methode lief der 11s-Task weiter, fragte gegen die bereits
+        geschlossene Sitzung ab und schrieb in eine Entitaet, die es nicht mehr
+        gibt. Er beendete sich zwar nach dem ersten Fehlschlag selbst - aber
+        erst nach bis zu elf Sekunden und mit Fehlermeldungen im Protokoll.
+
+        asyncio.CancelledError erbt von BaseException, wird vom "except
+        Exception" im Task also nicht abgefangen - der Abbruch kommt sauber
+        durch.
+        """
+        self._polling_active = False
+        task = self._flow_task
+        self._flow_task = None
+        if task is not None and not task.done():
+            task.cancel()
+        await super().async_will_remove_from_hass()
+    # ===== GEAENDERT (Nebenabfragen 2.1.0) - ENDE =====
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -1105,6 +1142,253 @@ class MyBinarySensorEntity(CoordinatorEntity, BinarySensorEntity, MyEntity):  # 
         state = self._rest_item.state
         self._attr_is_on = None if state is None else bool(state)
         self.async_write_ha_state()
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return MyEntity.my_device_info(self)
+
+
+# ============================================================================
+# ==   VENTIL (MyValveEntity)                                               ==
+# ==                                                                        ==
+# ==   Fasst den Leckageschutz zu einer HA-Ventil-Entitaet zusammen:         ==
+# ==   Zustand aus der Statusmaske 6900, Schalten ueber 5100/5200.           ==
+# ==                                                                        ==
+# ==   Zur Zwischenanzeige: der JUDO antwortet waehrend der Ventilfahrt mit  ==
+# ==   leeren Nutzdaten. Die Bits 12/13 (oeffnet/schliesst) sind deshalb in  ==
+# ==   der Praxis nie zu sehen - ueber 340 Ablesungen aus echten Logs kein   ==
+# ==   einziges Mal. Ohne Zutun stuende die Anzeige also rund zehn Sekunden  ==
+# ==   lang auf dem alten Wert. Deshalb setzt diese Klasse "oeffnet"/        ==
+# ==   "schliesst" beim Absenden selbst und loescht es wieder, sobald ein    ==
+# ==   eindeutiger Zustand hereinkommt - spaetestens nach VALVE_TRANSITION_  ==
+# ==   TIMEOUT Sekunden, damit die Anzeige nicht haengenbleiben kann.        ==
+# ============================================================================
+VALVE_TRANSITION_TIMEOUT = 30.0
+
+# ============================================================================
+# ==   NACHFASSEN NACH EINER SCHALTUNG                                      ==
+# ==                                                                        ==
+# ==   Ohne Zutun kommt der neue Ventilzustand erst im naechsten regulaeren  ==
+# ==   Durchlauf an - bei 60 s Abfrageintervall also bis zu einer Minute     ==
+# ==   spaeter. Nach einer Schaltung ueber Home Assistant fragt die          ==
+# ==   Ventil-Entitaet deshalb selbst nach, in eigenem Takt und NUR 6900.    ==
+# ==                                                                        ==
+# ==   Das regulaere Intervall laeuft unveraendert weiter; dies kommt nur    ==
+# ==   zusaetzlich dazu. Gleiches Muster wie der Wasserfluss-Task.           ==
+# ==                                                                        ==
+# ==   VALVE_POLL_DELAY: waehrend der Ventilfahrt antwortet der JUDO gar     ==
+# ==   nicht. Wie lange sie dauert, ist nicht dokumentiert - der Wert ist    ==
+# ==   eine Schaetzung und bewusst als Konstante herausgezogen. Faellt die   ==
+# ==   erste Abfrage noch in die Fahrt, kostet das nur einen Versuch.        ==
+# ============================================================================
+VALVE_POLL_DELAY = 12.0      # Wartezeit vor der ersten Nachfrage
+VALVE_POLL_INTERVAL = 10.0   # Takt der weiteren Nachfragen
+VALVE_POLL_TIMEOUT = 60.0    # danach aufgeben und dem Durchlauf ueberlassen
+
+
+class MyValveEntity(CoordinatorEntity, ValveEntity, MyEntity):  # pylint: disable=W0223
+    """Leckageschutz-Ventil als HA-Ventil-Entitaet."""
+
+    # Der JUDO kennt keine Zwischenstellung, nur auf und zu. Das Attribut MUSS
+    # gesetzt sein: ValveEntity.reports_position wirft sonst zur Laufzeit einen
+    # ValueError, weil _attr_reports_position keinen Vorgabewert hat.
+    _attr_reports_position = False
+    # device_class kommt aus PARAMS_VALVE, siehe Kommentar dort.
+    _attr_supported_features = ValveEntityFeature.OPEN | ValveEntityFeature.CLOSE
+
+    def __init__(
+        self,
+        config_entry: MyConfigEntry,
+        rest_item: RestItem,
+        coordinator: MyCoordinator,
+        idx,
+    ) -> None:
+        """Initialize MyValveEntity."""
+        super().__init__(coordinator, context=idx)
+        self._idx = idx
+        MyEntity.__init__(self, config_entry, rest_item, coordinator.rest_api)
+        self._uebergang_bis = None
+        self._nachfass_task = None
+        self._zustand_uebernehmen()
+
+    # -- Hilfen --------------------------------------------------------------
+    def _kommando(self, name: str) -> str | None:
+        """Schreibadresse aus den Parametern holen (5100 bzw. 5200)."""
+        if self._rest_item.params is None:
+            return None
+        return self._rest_item.params.get(name)
+
+    def _uebergang_abgelaufen(self) -> bool:
+        """True, wenn die selbst gesetzte Zwischenanzeige zu alt ist."""
+        return (
+            self._uebergang_bis is not None
+            and time.monotonic() >= self._uebergang_bis
+        )
+
+    def _uebergang_beenden(self) -> None:
+        self._uebergang_bis = None
+        self._attr_is_opening = False
+        self._attr_is_closing = False
+
+    def _zustand_uebernehmen(self) -> None:
+        """Zustand aus dem RestItem in die Entitaet uebernehmen.
+
+        Das restobject hat die Bitmaske bereits ausgewertet und legt einen der
+        Schluessel aus VALVE_STATE_LIST ab: opening / closing / open / closed.
+        """
+        zustand = self._rest_item.state
+
+        # Meldet das Geraet doch einmal eine Fahrbewegung, hat sie Vorrang vor
+        # unserer eigenen Annahme.
+        if zustand == "opening":
+            self._uebergang_bis = None
+            self._attr_is_opening = True
+            self._attr_is_closing = False
+            return
+        if zustand == "closing":
+            self._uebergang_bis = None
+            self._attr_is_opening = False
+            self._attr_is_closing = True
+            return
+
+        if zustand in ("closed", "open"):
+            # Waehrend einer laufenden Zwischenanzeige ist Vorsicht geboten:
+            # der JUDO liefert auf der Ventilfahrt gar nichts, im RestItem steht
+            # also noch die Endlage von VOR dem Befehl. Wuerde die einfach
+            # uebernommen, waere die Zwischenanzeige sofort wieder weg - genau
+            # das, was sie verhindern soll. Deshalb zaehlt nur die Endlage, die
+            # zum laufenden Vorgang passt.
+            ziel_erreicht = (
+                (zustand == "closed" and self._attr_is_closing)
+                or (zustand == "open" and self._attr_is_opening)
+            )
+            uebergang_laeuft = (
+                self._uebergang_bis is not None and not self._uebergang_abgelaufen()
+            )
+            if uebergang_laeuft and not ziel_erreicht:
+                return
+            self._uebergang_beenden()
+            self._attr_is_closed = zustand == "closed"
+            return
+
+        # Kein Wert (z.B. Firmware ohne 6900, oder Geraet beschaeftigt):
+        # zuletzt bekannte Endlage stehen lassen, aber eine abgelaufene
+        # Zwischenanzeige nicht ewig halten.
+        if self._uebergang_abgelaufen():
+            log.debug(
+                "Ventil: Zwischenanzeige nach %.0f s ohne Rueckmeldung beendet",
+                VALVE_TRANSITION_TIMEOUT,
+            )
+            self._uebergang_beenden()
+
+    # -- Nachfassen ----------------------------------------------------------
+    def _nachfassen_starten(self) -> None:
+        """Nach einer Schaltung selbst nach dem neuen Zustand sehen."""
+        self._nachfassen_beenden()
+        self._nachfass_task = asyncio.create_task(self._nachfass_task_lauf())
+
+    def _nachfassen_beenden(self) -> None:
+        """Laufenden Nachfass-Task abbrechen, falls vorhanden."""
+        task = self._nachfass_task
+        self._nachfass_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _nachfass_task_lauf(self) -> None:
+        """Nur 6900 abfragen, bis ein eindeutiger Zustand da ist.
+
+        Laeuft neben dem regulaeren Durchlauf, nicht an dessen Stelle. Die
+        Abfragen sind als Nebenabfrage gekennzeichnet und bleiben damit fuer
+        die Erkennung nicht unterstuetzter Kommandos unsichtbar - waehrend der
+        Ventilfahrt liefert der JUDO leere Antworten, und drei davon in Folge
+        wuerden 6900 sonst abschalten.
+        """
+        try:
+            await asyncio.sleep(VALVE_POLL_DELAY)
+            ende = time.monotonic() + VALVE_POLL_TIMEOUT
+            ro = RestObject(self._rest_api, self._rest_item, nebenabfrage=True)
+            while True:
+                zustand = await ro.value
+                if zustand in ("open", "closed", "opening", "closing"):
+                    self._rest_item.state = zustand
+                    self._zustand_uebernehmen()
+                    self.async_write_ha_state()
+                    log.debug("Ventil: Nachfassen ergab %r", zustand)
+                    if zustand in ("open", "closed"):
+                        # Endlage erreicht - die Meldung ueber ein
+                        # geschlossenes Ventil soll nicht bis zum naechsten
+                        # Durchlauf warten.
+                        try:
+                            self.coordinator.valve_state_updated(zustand)
+                        except Exception as e:  # pylint: disable=broad-except
+                            log.debug("Ventil: Meldungspruefung uebersprungen: %s", e)
+                        return
+                if time.monotonic() >= ende:
+                    log.debug(
+                        "Ventil: Nachfassen nach %.0f s ohne Ergebnis beendet",
+                        VALVE_POLL_TIMEOUT,
+                    )
+                    return
+                await asyncio.sleep(VALVE_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # pylint: disable=broad-except
+            log.error("Fehler beim Nachfassen des Ventilzustands: %s", e)
+        finally:
+            self._nachfass_task = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Beim Entladen oder Neuladen keinen Task zuruecklassen."""
+        self._nachfassen_beenden()
+        await super().async_will_remove_from_hass()
+
+    # -- Coordinator ---------------------------------------------------------
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._zustand_uebernehmen()
+        self.async_write_ha_state()
+
+    # -- Bedienung -----------------------------------------------------------
+    async def _schalten(self, kommando_name: str, oeffnen: bool) -> None:
+        """Ventil schalten und die Zwischenanzeige setzen."""
+        command = self._kommando(kommando_name)
+        if command is None:
+            log.error("Ventil: keine Adresse fuer %s hinterlegt", kommando_name)
+            return
+        # Anzeige erst NACH dem erfolgreichen Absenden umstellen - schlaegt der
+        # Schreibvorgang fehl, bleibt die alte Anzeige stehen statt in einem
+        # Uebergang haengen.
+        # set_rest() liefert bei Erfolg den Antwortinhalt und NUR im Fehlerfall
+        # None (dann steht auch "Connection to Judo Zewa failed" im Log). In 13
+        # echten Schreibvorgaengen aus dem Geraetelog kam kein einziges Mal
+        # None - der Rueckgabewert ist also brauchbar.
+        try:
+            antwort = await self.coordinator.rest_api.set_rest(command, "")
+        except Exception as e:  # pylint: disable=broad-except
+            log.error("Fehler beim Schalten des Ventils: %s", e)
+            return
+        if antwort is None:
+            log.error(
+                "Ventil: Kommando %s wurde nicht angenommen - Anzeige bleibt unveraendert",
+                command,
+            )
+            return
+        self._attr_is_opening = oeffnen
+        self._attr_is_closing = not oeffnen
+        self._uebergang_bis = time.monotonic() + VALVE_TRANSITION_TIMEOUT
+        self.async_write_ha_state()
+        # Nicht bis zum naechsten regulaeren Durchlauf warten.
+        self._nachfassen_starten()
+
+    async def async_open_valve(self) -> None:
+        """Open the valve."""
+        await self._schalten("address_open", True)
+
+    async def async_close_valve(self) -> None:
+        """Close the valve."""
+        await self._schalten("address_close", False)
 
     @property
     def device_info(self) -> DeviceInfo:
